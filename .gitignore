@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment / secrets — NEVER commit the Hevy API key or dashboard password
+.env
+.env.*
+!.env.example
+
+# Plaintext synced data (only the encrypted blob is published)
+data/dataset.json
+public/data/dataset.json
+public/data/dataset.enc.json
+
+# Misc
+.DS_Store
+*.log
+.vite/

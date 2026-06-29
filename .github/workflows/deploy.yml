@@ -1,0 +1,70 @@
+name: Sync & Deploy
+
+# Pulls fresh data from Hevy, encrypts it with the dashboard password, builds the
+# static site, and publishes it to GitHub Pages. The Hevy API key never reaches
+# the browser — it is only used here at build time.
+
+on:
+  # Refresh every 6 hours so the dashboard keeps up with new workouts.
+  schedule:
+    - cron: "0 */6 * * *"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+  # Rebuild whenever the site code changes.
+  push:
+    branches:
+      - main
+      - claude/hevy-workout-dashboard-jp28ui
+
+# Only one deployment at a time; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Sync data from Hevy
+        env:
+          HEVY_API_KEY: ${{ secrets.HEVY_API_KEY }}
+        run: npm run sync
+
+      - name: Encrypt data with dashboard password
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: npm run encrypt
+
+      - name: Build site
+        env:
+          # Serve under https://<user>.github.io/<repo>/
+          BASE_PATH: "/${{ github.event.repository.name }}/"
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
