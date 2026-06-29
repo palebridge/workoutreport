@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import type { Consistency, Overview } from "../data/metrics";
-import { DISPLAY_NAME } from "../config";
+import { DISPLAY_NAME, WORKFLOW_URL } from "../config";
 import { fmtDuration, fmtWeight } from "../data/metrics";
 import type { UserMeta } from "../data/types";
 import { useUnit } from "../hooks/useUnit";
@@ -55,6 +55,20 @@ export function Hero({
 
       <p className="relative mt-6 text-xs text-slate-500">
         Last synced {new Date(generatedAt).toLocaleString()}
+        {WORKFLOW_URL && (
+          <>
+            {" · "}
+            <a
+              href={WORKFLOW_URL}
+              target="_blank"
+              rel="noreferrer"
+              title="Pull fresh data from Hevy (runs the deploy workflow, ~1–2 min). Then hit Refresh."
+              className="text-glow-violet/80 underline-offset-2 transition hover:text-glow-violet hover:underline"
+            >
+              Sync from Hevy ↗
+            </a>
+          </>
+        )}
       </p>
     </motion.header>
   );

@@ -5,7 +5,13 @@ import type { Dataset, EncryptedPayload } from "../data/types";
 
 type Status = "loading" | "ready" | "decrypting" | "error";
 
-export function Gate({ baseUrl, onUnlock }: { baseUrl: string; onUnlock: (d: Dataset) => void }) {
+export function Gate({
+  baseUrl,
+  onUnlock,
+}: {
+  baseUrl: string;
+  onUnlock: (d: Dataset, password: string) => void;
+}) {
   const [payload, setPayload] = useState<EncryptedPayload | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [password, setPassword] = useState("");
@@ -36,7 +42,7 @@ export function Gate({ baseUrl, onUnlock }: { baseUrl: string; onUnlock: (d: Dat
     setError(null);
     try {
       const data = await decryptDataset(payload, password);
-      onUnlock(data);
+      onUnlock(data, password);
     } catch (err) {
       setStatus("ready");
       setError(

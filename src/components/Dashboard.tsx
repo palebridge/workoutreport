@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   achievements,
   categorySplit,
@@ -23,8 +23,29 @@ import { TimeTrend } from "./TimeTrend";
 import { UnitToggle } from "./UnitToggle";
 import { VolumeTrend } from "./VolumeTrend";
 
-export function Dashboard({ dataset }: { dataset: Dataset }) {
+type RefreshStatus = "idle" | "loading" | "updated" | "current" | "error";
+
+export function Dashboard({
+  dataset,
+  onRefresh,
+}: {
+  dataset: Dataset;
+  onRefresh: () => Promise<{ changed: boolean }>;
+}) {
   const { target } = useWeeklyTarget();
+  const [status, setStatus] = useState<RefreshStatus>("idle");
+
+  async function handleRefresh() {
+    if (status === "loading") return;
+    setStatus("loading");
+    try {
+      const { changed } = await onRefresh();
+      setStatus(changed ? "updated" : "current");
+    } catch {
+      setStatus("error");
+    }
+    window.setTimeout(() => setStatus("idle"), 2600);
+  }
   const ov = useMemo(() => overview(dataset), [dataset]);
   const muscles = useMemo(() => muscleBalance(dataset), [dataset]);
   const split = useMemo(() => categorySplit(muscles), [muscles]);
@@ -45,11 +66,20 @@ export function Dashboard({ dataset }: { dataset: Dataset }) {
         <div className="flex items-center gap-2">
           <UnitToggle />
           <button
+            onClick={handleRefresh}
+            disabled={status === "loading"}
+            title="Re-fetch the latest deployed data"
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 transition hover:text-white disabled:opacity-60"
+          >
+            <span className={status === "loading" ? "inline-block animate-spin" : ""}>↻</span>
+            {refreshLabel(status)}
+          </button>
+          <button
             onClick={() => location.reload()}
             title="Lock dashboard"
             className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-400 transition hover:text-slate-200"
           >
-            🔒 Lock
+            🔒
           </button>
         </div>
       </div>
@@ -77,4 +107,19 @@ export function Dashboard({ dataset }: { dataset: Dataset }) {
       </div>
     </div>
   );
+}
+
+function refreshLabel(status: RefreshStatus): string {
+  switch (status) {
+    case "loading":
+      return "Refreshing…";
+    case "updated":
+      return "Updated ✓";
+    case "current":
+      return "Up to date";
+    case "error":
+      return "Retry";
+    default:
+      return "Refresh";
+  }
 }
