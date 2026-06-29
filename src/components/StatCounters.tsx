@@ -47,11 +47,11 @@ export function StatCounters({ ov, cons }: { ov: Overview; cons: Consistency }) 
       icon: "🎯",
     },
     {
-      label: "Longest streak",
-      value: cons.longestStreak,
-      format: (v) => `${Math.round(v)}d`,
+      label: "Per week",
+      value: cons.avgPerWeek,
+      format: (v) => v.toFixed(1),
       accent: "from-glow-rose/30 to-glow-amber/10",
-      icon: "🔥",
+      icon: "🗓️",
     },
   ];
 

@@ -239,74 +239,94 @@ export function categorySplit(stats: MuscleStat[]): CategorySplit[] {
 }
 
 // ----------------------------------------------------------------------------
-// Consistency / streaks
+// Consistency — weekly-goal model (more meaningful than daily streaks for
+// people who train a few times a week rather than every day).
 // ----------------------------------------------------------------------------
 
 export interface Consistency {
-  /** dayKey -> number of workouts that day */
+  /** dayKey -> number of workouts that day (for the calendar heatmap) */
   byDay: Record<string, number>;
-  currentStreak: number;
-  longestStreak: number;
-  visitsThisWeek: number;
-  visitsThisMonth: number;
+  /** weekly session goal the metrics are measured against */
+  target: number;
+  sessionsThisWeek: number;
+  /** average sessions per week across the active span (first week → now) */
+  avgPerWeek: number;
+  /** consecutive weeks (counting back from now) that hit the target */
+  weeksOnTargetStreak: number;
+  /** longest run of consecutive weeks that hit the target */
+  longestWeekStreak: number;
+  weeksMetTarget: number;
+  totalWeeks: number;
+  /** most sessions in any single week */
+  bestWeek: number;
   activeDays: number;
 }
 
-export function consistency(d: Dataset): Consistency {
+export function consistency(d: Dataset, target: number): Consistency {
   const byDay: Record<string, number> = {};
   for (const w of d.workouts) {
     const k = dayKey(w.startTime);
     byDay[k] = (byDay[k] ?? 0) + 1;
   }
 
-  const days = Object.keys(byDay).sort();
-  let longest = 0;
-  let run = 0;
-  let prev: Date | null = null;
-  for (const k of days) {
-    const cur = new Date(k + "T00:00:00");
-    if (prev && diffDays(prev, cur) === 1) run += 1;
-    else run = 1;
-    longest = Math.max(longest, run);
-    prev = cur;
-  }
-
-  // Current streak counts back from today (or yesterday, to be forgiving).
-  let current = 0;
-  const today = startOfDay(new Date());
-  const cursor = new Date(today);
-  if (!byDay[fmtDay(cursor)]) cursor.setDate(cursor.getDate() - 1);
-  while (byDay[fmtDay(cursor)]) {
-    current += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  const now = new Date();
-  const weekKey = isoWeek(now.toISOString()).key;
-  const monthPrefix = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
-  let visitsThisWeek = 0;
-  let visitsThisMonth = 0;
+  // Bucket sessions into ISO weeks.
+  const perWeek = new Map<string, number>();
   for (const w of d.workouts) {
-    if (isoWeek(w.startTime).key === weekKey) visitsThisWeek += 1;
-    if (dayKey(w.startTime).startsWith(monthPrefix)) visitsThisMonth += 1;
+    const key = isoWeek(w.startTime).key;
+    perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
+  }
+
+  // Build a *contiguous* list of weeks from the first workout's week to the
+  // current week, filling gap weeks with 0 so streaks/averages are correct.
+  const now = new Date();
+  const currentWeekStart = isoWeek(now.toISOString()).weekStart;
+  const counts: number[] = [];
+  if (d.workouts.length > 0) {
+    const firstStart = isoWeek(d.workouts[0].startTime).weekStart;
+    const cursor = new Date(firstStart);
+    while (cursor.getTime() <= currentWeekStart.getTime()) {
+      counts.push(perWeek.get(isoWeek(cursor.toISOString()).key) ?? 0);
+      cursor.setDate(cursor.getDate() + 7);
+    }
+  }
+
+  const totalWeeks = counts.length;
+  const totalWorkouts = d.workouts.length;
+  const sessionsThisWeek = perWeek.get(isoWeek(now.toISOString()).key) ?? 0;
+  const avgPerWeek = totalWeeks > 0 ? totalWorkouts / totalWeeks : 0;
+  const bestWeek = counts.reduce((m, c) => Math.max(m, c), 0);
+  const weeksMetTarget = counts.filter((c) => c >= target).length;
+
+  // Longest run of on-target weeks anywhere in the span.
+  let longestWeekStreak = 0;
+  let run = 0;
+  for (const c of counts) {
+    run = c >= target ? run + 1 : 0;
+    longestWeekStreak = Math.max(longestWeekStreak, run);
+  }
+
+  // Current weekly streak, counting back from now. Forgive the in-progress
+  // current week if it hasn't hit the target yet (mirrors a grace day).
+  let weeksOnTargetStreak = 0;
+  let i = counts.length - 1;
+  if (i >= 0 && counts[i] < target) i -= 1; // skip unfinished current week
+  for (; i >= 0; i--) {
+    if (counts[i] >= target) weeksOnTargetStreak += 1;
+    else break;
   }
 
   return {
     byDay,
-    currentStreak: current,
-    longestStreak: longest,
-    visitsThisWeek,
-    visitsThisMonth,
-    activeDays: days.length,
+    target,
+    sessionsThisWeek,
+    avgPerWeek,
+    weeksOnTargetStreak,
+    longestWeekStreak,
+    weeksMetTarget,
+    totalWeeks,
+    bestWeek,
+    activeDays: Object.keys(byDay).length,
   };
-}
-
-function fmtDay(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function diffDays(a: Date, b: Date): number {
-  return Math.round((startOfDay(b).getTime() - startOfDay(a).getTime()) / 86400000);
 }
 
 // ----------------------------------------------------------------------------
@@ -554,7 +574,8 @@ export function achievements(_d: Dataset, ov: Overview, cons: Consistency): Achi
     mk("five", "🔥", "Getting Consistent", "Complete 5 workouts", ov.workouts, 5),
     mk("twenty", "🏋️", "Committed", "Complete 20 workouts", ov.workouts, 20),
     mk("fifty", "💎", "Iron Habit", "Complete 50 workouts", ov.workouts, 50),
-    mk("streak3", "⚡", "On a Roll", "Reach a 3-day streak", cons.longestStreak, 3),
+    mk("ontarget", "🎯", "On Target", "Hit your weekly session goal", cons.weeksMetTarget, 1),
+    mk("lockedin", "📆", "Locked In", "Hit your weekly goal 4 weeks running", cons.longestWeekStreak, 4),
     mk("ton", "🐘", "One Tonne Club", "Lift 1,000 kg of total volume", tonnage, 1000),
     mk("tenton", "🚛", "Ten Tonnes", "Lift 10,000 kg of total volume", tonnage, 10000),
     mk("hour", "⏱️", "Hour of Power", "Train for 1 total hour", hours, 1),

@@ -11,6 +11,7 @@ import {
   workoutTrend,
 } from "../data/metrics";
 import type { Dataset } from "../data/types";
+import { useWeeklyTarget } from "../hooks/useWeeklyTarget";
 import { Achievements } from "./Achievements";
 import { ConsistencyHeatmap } from "./ConsistencyHeatmap";
 import { ExerciseProgress } from "./ExerciseProgress";
@@ -23,10 +24,11 @@ import { UnitToggle } from "./UnitToggle";
 import { VolumeTrend } from "./VolumeTrend";
 
 export function Dashboard({ dataset }: { dataset: Dataset }) {
+  const { target } = useWeeklyTarget();
   const ov = useMemo(() => overview(dataset), [dataset]);
   const muscles = useMemo(() => muscleBalance(dataset), [dataset]);
   const split = useMemo(() => categorySplit(muscles), [muscles]);
-  const cons = useMemo(() => consistency(dataset), [dataset]);
+  const cons = useMemo(() => consistency(dataset, target), [dataset, target]);
   const sessions = useMemo(() => workoutTrend(dataset), [dataset]);
   const weeks = useMemo(() => weeklyTrend(dataset), [dataset]);
   const summaries = useMemo(() => exerciseSummaries(dataset), [dataset]);

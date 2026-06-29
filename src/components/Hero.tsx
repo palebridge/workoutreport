@@ -21,9 +21,11 @@ export function Hero({
   const headline =
     ov.workouts <= 1
       ? "The journey begins. 🌱"
-      : cons.currentStreak >= 2
-        ? `You're on a ${cons.currentStreak}-day streak. Keep it rolling. 🔥`
-        : "Every session counts. Let's go. 💪";
+      : cons.sessionsThisWeek >= cons.target
+        ? "Weekly goal smashed. 💪"
+        : cons.weeksOnTargetStreak >= 2
+          ? `${cons.weeksOnTargetStreak} weeks on target and counting. 🔥`
+          : "Every session counts. Let's go. 💪";
 
   return (
     <motion.header
@@ -46,7 +48,7 @@ export function Hero({
           <HeroStat label="Training for" value={`${ov.daysTraining} ${plural(ov.daysTraining, "day")}`} />
           <HeroStat label="Total time" value={fmtDuration(ov.totalDurationSec)} />
           <HeroStat label="Volume lifted" value={fmtWeight(ov.totalVolumeKg, unit)} />
-          <HeroStat label="Current streak" value={`${cons.currentStreak} ${plural(cons.currentStreak, "day")}`} />
+          <HeroStat label="This week" value={`${cons.sessionsThisWeek} / ${cons.target}`} />
         </div>
       </div>
 

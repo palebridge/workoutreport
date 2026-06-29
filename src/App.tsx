@@ -3,6 +3,7 @@ import { Dashboard } from "./components/Dashboard";
 import { Gate } from "./components/Gate";
 import type { Dataset } from "./data/types";
 import { UnitProvider } from "./hooks/useUnit";
+import { WeeklyTargetProvider } from "./hooks/useWeeklyTarget";
 
 // Vite's BASE_URL already includes the trailing slash (e.g. "/workoutreport/").
 const BASE_URL = import.meta.env.BASE_URL;
@@ -16,7 +17,9 @@ export default function App() {
 
   return (
     <UnitProvider>
-      <Dashboard dataset={dataset} />
+      <WeeklyTargetProvider>
+        <Dashboard dataset={dataset} />
+      </WeeklyTargetProvider>
     </UnitProvider>
   );
 }
