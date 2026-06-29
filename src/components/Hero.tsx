@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import type { Consistency, Overview } from "../data/metrics";
+import { DISPLAY_NAME } from "../config";
 import { fmtDuration, fmtWeight } from "../data/metrics";
 import type { UserMeta } from "../data/types";
 import { useUnit } from "../hooks/useUnit";
@@ -16,7 +17,7 @@ export function Hero({
   generatedAt: string;
 }) {
   const { unit } = useUnit();
-  const name = user?.name ?? "athlete";
+  const name = DISPLAY_NAME ?? user?.name ?? "athlete";
 
   const headline =
     ov.workouts <= 1
