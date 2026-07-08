@@ -26,27 +26,35 @@ export function Achievements({
             Personal Records
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {topRecords.map((r) => (
-              <div
-                key={r.templateId}
-                className="rounded-xl border border-glow-amber/20 bg-glow-amber/5 p-3"
-              >
-                <div className="truncate text-xs text-slate-300" title={r.title}>
-                  {r.title}
+            {topRecords.map((r) => {
+              const fresh = Date.now() - Date.parse(r.date) < 14 * 86400000;
+              return (
+                <div
+                  key={r.templateId}
+                  className="relative rounded-xl border border-glow-amber/20 bg-glow-amber/5 p-3"
+                >
+                  {fresh && (
+                    <span className="absolute right-2 top-2 rounded-full bg-glow-amber/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-glow-amber">
+                      New
+                    </span>
+                  )}
+                  <div className="truncate pr-8 text-xs text-slate-300" title={r.title}>
+                    {r.title}
+                  </div>
+                  <div className="mt-1 font-display text-lg font-semibold text-glow-amber">
+                    {fmtWeight(r.best1RMKg, unit, 1)}
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    est. 1RM · {shortDate(r.date)}
+                  </div>
                 </div>
-                <div className="mt-1 font-display text-lg font-semibold text-glow-amber">
-                  {fmtWeight(r.best1RMKg, unit, 1)}
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  est. 1RM · {shortDate(r.date)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
         {achievements.map((a, i) => (
           <motion.div
             key={a.id}

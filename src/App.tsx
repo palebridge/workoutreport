@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { Dashboard } from "./components/Dashboard";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Gate } from "./components/Gate";
 import { decryptDataset, fetchEncryptedPayload } from "./crypto/decrypt";
 import type { Dataset } from "./data/types";
@@ -43,10 +44,12 @@ export default function App() {
   }
 
   return (
-    <UnitProvider>
-      <WeeklyTargetProvider>
-        <Dashboard dataset={dataset} onRefresh={refresh} />
-      </WeeklyTargetProvider>
-    </UnitProvider>
+    <ErrorBoundary>
+      <UnitProvider>
+        <WeeklyTargetProvider>
+          <Dashboard dataset={dataset} onRefresh={refresh} />
+        </WeeklyTargetProvider>
+      </UnitProvider>
+    </ErrorBoundary>
   );
 }

@@ -32,6 +32,14 @@ export function isWorkingSet(s: DatasetSet): boolean {
   return s.type !== "warmup";
 }
 
+/**
+ * A set that represents actual resistance/rep work. Duration-only entries
+ * (timed warm-ups, stretching) shouldn't count toward muscle-balance sets.
+ */
+export function isCountableSet(s: DatasetSet): boolean {
+  return isWorkingSet(s) && (s.reps != null || s.weightKg != null);
+}
+
 export function setVolumeKg(s: DatasetSet): number {
   return (s.weightKg ?? 0) * (s.reps ?? 0);
 }
@@ -162,13 +170,26 @@ export function categoryOf(muscle: string): MuscleCategory {
   return CATEGORY[muscle] ?? "Other";
 }
 
+// Validated categorical palette (dataviz six-checks, dark surface #10131b):
+// lightness band, chroma floor, CVD ΔE 39.3, contrast ≥3:1 all pass. Keep the
+// slot order fixed — it is the CVD-safety mechanism, not cosmetic.
 export const CATEGORY_COLORS: Record<MuscleCategory, string> = {
-  Push: "#fb7185",
-  Pull: "#22d3ee",
-  Legs: "#34d399",
-  Core: "#fbbf24",
-  Other: "#a78bfa",
+  Push: "#e11d48",
+  Pull: "#0891b2",
+  Legs: "#059669",
+  Core: "#d97706",
+  Other: "#8b5cf6",
 };
+
+/** Single-series accent colors reused across the standalone charts. */
+export const CHART = {
+  accent: "#8b5cf6", // violet — primary line/marks
+  volume: "#059669", // emerald — tonnage
+  time: "#0891b2", // cyan — duration
+  pr: "#d97706", // amber — PR markers
+  grid: "rgba(255,255,255,0.06)",
+  surface: "#10131b", // card surface (for surface gaps/rings on marks)
+} as const;
 
 export function prettyMuscle(m: string): string {
   return m
@@ -203,7 +224,7 @@ export function muscleBalance(d: Dataset): MuscleStat[] {
     for (const e of w.exercises) {
       const t = d.templates[e.templateId];
       if (!t || !t.primaryMuscleGroup) continue;
-      const working = e.sets.filter(isWorkingSet);
+      const working = e.sets.filter(isCountableSet);
       const n = working.length;
       if (n === 0) continue;
       const vol = working.reduce((acc, s) => acc + setVolumeKg(s), 0);
@@ -243,9 +264,18 @@ export function categorySplit(stats: MuscleStat[]): CategorySplit[] {
 // people who train a few times a week rather than every day).
 // ----------------------------------------------------------------------------
 
+export interface WeekSessions {
+  /** short label of the week's Monday, e.g. "Jun 29" */
+  label: string;
+  count: number;
+  onTarget: boolean;
+}
+
 export interface Consistency {
   /** dayKey -> number of workouts that day (for the calendar heatmap) */
   byDay: Record<string, number>;
+  /** contiguous week-by-week session counts, first workout's week → now */
+  weeks: WeekSessions[];
   /** weekly session goal the metrics are measured against */
   target: number;
   sessionsThisWeek: number;
@@ -281,11 +311,14 @@ export function consistency(d: Dataset, target: number): Consistency {
   const now = new Date();
   const currentWeekStart = isoWeek(now.toISOString()).weekStart;
   const counts: number[] = [];
+  const weeks: WeekSessions[] = [];
   if (d.workouts.length > 0) {
     const firstStart = isoWeek(d.workouts[0].startTime).weekStart;
     const cursor = new Date(firstStart);
     while (cursor.getTime() <= currentWeekStart.getTime()) {
-      counts.push(perWeek.get(isoWeek(cursor.toISOString()).key) ?? 0);
+      const count = perWeek.get(isoWeek(cursor.toISOString()).key) ?? 0;
+      counts.push(count);
+      weeks.push({ label: shortDate(cursor.toISOString()), count, onTarget: count >= target });
       cursor.setDate(cursor.getDate() + 7);
     }
   }
@@ -317,6 +350,7 @@ export function consistency(d: Dataset, target: number): Consistency {
 
   return {
     byDay,
+    weeks,
     target,
     sessionsThisWeek,
     avgPerWeek,
@@ -327,6 +361,115 @@ export function consistency(d: Dataset, target: number): Consistency {
     bestWeek,
     activeDays: Object.keys(byDay).length,
   };
+}
+
+// ----------------------------------------------------------------------------
+// Weekday rhythm — which days of the week training happens on
+// ----------------------------------------------------------------------------
+
+export interface WeekdayCount {
+  day: string;
+  count: number;
+}
+
+export function weekdayRhythm(d: Dataset): WeekdayCount[] {
+  const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const counts = new Array(7).fill(0) as number[];
+  for (const w of d.workouts) {
+    counts[(new Date(w.startTime).getDay() + 6) % 7] += 1;
+  }
+  return names.map((day, i) => ({ day, count: counts[i] }));
+}
+
+// ----------------------------------------------------------------------------
+// Insights — computed "coach's notes" from the data
+// ----------------------------------------------------------------------------
+
+export interface Insight {
+  id: string;
+  emoji: string;
+  text: string;
+}
+
+export function buildInsights(
+  d: Dataset,
+  ov: Overview,
+  cons: Consistency,
+  muscles: MuscleStat[],
+  badges: Achievement[],
+): Insight[] {
+  const out: Insight[] = [];
+
+  // Weekly goal status
+  const remaining = cons.target - cons.sessionsThisWeek;
+  if (ov.workouts > 0) {
+    out.push(
+      remaining <= 0
+        ? { id: "goal", emoji: "✅", text: `Weekly goal hit — ${cons.sessionsThisWeek} of ${cons.target} sessions done. Anything extra is a bonus.` }
+        : { id: "goal", emoji: "🎯", text: `${remaining} more session${remaining > 1 ? "s" : ""} to hit this week's goal of ${cons.target}.` },
+    );
+  }
+
+  // Time since last session
+  if (ov.lastWorkout) {
+    const days = Math.floor((Date.now() - Date.parse(ov.lastWorkout)) / 86400000);
+    if (days >= 4) {
+      out.push({ id: "gap", emoji: "⏰", text: `It's been ${days} days since your last session — a short one still counts.` });
+    } else if (days >= 0) {
+      out.push({
+        id: "gap",
+        emoji: "💪",
+        text: days === 0 ? "You trained today. Recovery is where the growth happens." : `Last session ${days} day${days > 1 ? "s" : ""} ago — right on rhythm.`,
+      });
+    }
+  }
+
+  // Muscle balance callout (needs enough data to be meaningful)
+  if (muscles.length >= 3) {
+    const most = muscles[0];
+    const least = muscles[muscles.length - 1];
+    if (most.sets >= least.sets * 2) {
+      out.push({
+        id: "balance",
+        emoji: "⚖️",
+        text: `${least.label} is getting the least attention (${least.sets} weighted sets vs ${most.sets} for ${most.label.toLowerCase()}) — worth a couple of sets next visit.`,
+      });
+    } else {
+      out.push({ id: "balance", emoji: "⚖️", text: `Training is nicely balanced — ${most.label.toLowerCase()} leads with ${most.sets} weighted sets, nothing is badly lagging.` });
+    }
+  }
+
+  // Progression: biggest est-1RM improvement across repeated exercises
+  let bestGain: { title: string; gainKg: number } | null = null;
+  const byTemplate = new Map<string, ProgressPoint[]>();
+  const ids = new Set<string>();
+  for (const w of d.workouts) for (const e of w.exercises) ids.add(e.templateId);
+  for (const id of ids) byTemplate.set(id, exerciseProgress(d, id));
+  for (const [id, pts] of byTemplate) {
+    const strength = pts.filter((p) => p.est1RMKg > 0);
+    if (strength.length >= 2) {
+      const gain = strength[strength.length - 1].est1RMKg - strength[0].est1RMKg;
+      if (gain > 0 && (!bestGain || gain > bestGain.gainKg)) {
+        const t = d.templates[id];
+        bestGain = { title: t?.title ?? "an exercise", gainKg: Math.round(gain * 10) / 10 };
+      }
+    }
+  }
+  if (bestGain) {
+    out.push({ id: "gain", emoji: "📈", text: `${bestGain.title} est. 1RM is up ${bestGain.gainKg} kg since you started — progress is compounding.` });
+  } else if (ov.workouts >= 2) {
+    out.push({ id: "gain", emoji: "📈", text: "Repeat an exercise from an earlier session to unlock progression tracking — same lift, add a rep or a little weight." });
+  }
+
+  // Next badge within reach
+  const next = badges
+    .filter((b) => !b.earned)
+    .sort((a, b) => b.progress - a.progress)[0];
+  if (next) {
+    out.push({ id: "badge", emoji: next.emoji, text: `Next badge in reach: ${next.title} — ${next.description.toLowerCase()}.` });
+  }
+
+  return out.slice(0, 4);
 }
 
 // ----------------------------------------------------------------------------
@@ -420,7 +563,13 @@ export interface ExerciseSummary {
 export function exerciseSummaries(d: Dataset): ExerciseSummary[] {
   const map = new Map<string, ExerciseSummary>();
   for (const w of d.workouts) {
+    // Count each workout once per exercise, even if the exercise appears in
+    // multiple slots (e.g. split across supersets).
+    const seenThisWorkout = new Set<string>();
     for (const e of w.exercises) {
+      // Duration-only entries (timed warm-ups, stretching) aren't trackable
+      // lifts — keep them out of the progress picker entirely.
+      if (!e.sets.some(isCountableSet)) continue;
       const cur =
         map.get(e.templateId) ??
         ({
@@ -433,7 +582,10 @@ export function exerciseSummaries(d: Dataset): ExerciseSummary[] {
           best1RMKg: 0,
           lastPerformed: w.startTime,
         } as ExerciseSummary);
-      cur.sessions += 1;
+      if (!seenThisWorkout.has(e.templateId)) {
+        cur.sessions += 1;
+        seenThisWorkout.add(e.templateId);
+      }
       for (const s of e.sets) {
         cur.totalSets += 1;
         if (isStrengthSet(s) && isWorkingSet(s)) {
@@ -581,6 +733,7 @@ export function achievements(_d: Dataset, ov: Overview, cons: Consistency): Achi
     mk("hour", "⏱️", "Hour of Power", "Train for 1 total hour", hours, 1),
     mk("tenhours", "🕙", "Time Under Tension", "Train for 10 total hours", hours, 10),
     mk("explorer", "🧭", "Explorer", "Try 10 different exercises", ov.uniqueExercises, 10),
+    mk("century", "💯", "Century Club", "Log 100 total sets", ov.totalSets, 100),
   ];
 }
 

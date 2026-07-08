@@ -39,21 +39,15 @@ export function TimeTrend({
       ) : (
         <div className="h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 10, right: 8, left: -16, bottom: 0 }}>
-              <defs>
-                <linearGradient id="timeFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.95} />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity={0.7} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <BarChart data={data} margin={{ top: 10, right: 8, left: -8, bottom: 0 }}>
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} width={40} unit="m" />
+              <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} width={46} unit="m" />
               <Tooltip
                 cursor={{ fill: "rgba(255,255,255,0.04)" }}
                 content={<ChartTooltip formatter={(v: number) => `${v} min`} />}
               />
-              <Bar dataKey="value" name="Duration" fill="url(#timeFill)" radius={[6, 6, 0, 0]} maxBarSize={46} />
+              <Bar dataKey="value" name="Duration" fill="#0891b2" radius={[4, 4, 0, 0]} maxBarSize={24} />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -89,19 +89,26 @@ export function EmptyHint({ children }: { children: ReactNode }) {
   );
 }
 
-/** Tiny tooltip used by the Recharts components for a consistent look. */
+/**
+ * Tiny tooltip used by the Recharts components. The value leads (strong,
+ * high-contrast) and the series name follows in secondary ink; each row is
+ * keyed by a short line stroke in the series color.
+ */
 export function ChartTooltip({ active, payload, label, formatter }: any) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl border border-white/10 bg-ink-900/95 px-3 py-2 text-xs shadow-card backdrop-blur">
       {label != null && <div className="mb-1 font-medium text-slate-300">{label}</div>}
       {payload.map((p: any, i: number) => (
-        <div key={i} className="flex items-center gap-2 text-slate-400">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.color || p.fill }} />
-          <span className="text-slate-300">{p.name}:</span>
-          <span className="font-medium text-white">
+        <div key={i} className="flex items-center gap-2">
+          <span
+            className="inline-block h-[2px] w-3 rounded-full"
+            style={{ background: p.color || p.fill }}
+          />
+          <span className="font-semibold text-white">
             {formatter ? formatter(p.value, p.name) : p.value}
           </span>
+          <span className="text-slate-400">{p.name}</span>
         </div>
       ))}
     </div>

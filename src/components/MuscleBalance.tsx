@@ -79,7 +79,7 @@ export function MuscleBalance({
                   stroke="#8b5cf6"
                   strokeWidth={2}
                   fill="#8b5cf6"
-                  fillOpacity={0.35}
+                  fillOpacity={0.18}
                   isAnimationActive
                 />
                 <Tooltip content={<ChartTooltip formatter={(v: number) => round(v)} />} />
@@ -101,8 +101,9 @@ export function MuscleBalance({
                   nameKey="category"
                   innerRadius={52}
                   outerRadius={78}
-                  paddingAngle={3}
-                  stroke="none"
+                  paddingAngle={2}
+                  stroke="#10131b"
+                  strokeWidth={2}
                 >
                   {split.map((s) => (
                     <Cell key={s.category} fill={s.color} />

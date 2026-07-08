@@ -37,11 +37,11 @@ export function VolumeTrend({
             <AreaChart data={data} margin={{ top: 10, right: 8, left: -12, bottom: 0 }}>
               <defs>
                 <linearGradient id="volFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#34d399" stopOpacity={0.5} />
-                  <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#059669" stopOpacity={0.16} />
+                  <stop offset="100%" stopColor="#059669" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} width={48} />
               <Tooltip content={<ChartTooltip formatter={(v: number) => `${v.toLocaleString()} ${unit}`} />} />
@@ -49,11 +49,11 @@ export function VolumeTrend({
                 type="monotone"
                 dataKey="value"
                 name="Volume"
-                stroke="#34d399"
-                strokeWidth={2.5}
+                stroke="#059669"
+                strokeWidth={2}
                 fill="url(#volFill)"
-                dot={{ r: 2.5, fill: "#34d399" }}
-                activeDot={{ r: 4 }}
+                dot={{ r: 4, fill: "#059669", stroke: "#10131b", strokeWidth: 2 }}
+                activeDot={{ r: 5, stroke: "#10131b", strokeWidth: 2 }}
               />
             </AreaChart>
           </ResponsiveContainer>

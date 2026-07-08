@@ -1,9 +1,11 @@
 # 💪 Workout Report
 
 A beautiful, modern dashboard for following your [Hevy](https://www.hevy.com/)
-workout progress — muscle balance, consistency streaks, volume & time trends,
-per‑exercise progression with estimated‑1RM PRs, achievements, and a recent‑workout
-feed. It's **free to host** (GitHub Pages), refreshes itself on a schedule, and is
+workout progress — muscle balance, weekly-goal consistency with a calendar heatmap,
+auto-computed coach's notes, volume & time trends, weekday rhythm and
+sessions-per-week charts, per‑exercise progression with estimated‑1RM PRs,
+body-weight tracking, achievements, a recent‑workout feed, and a global time-range
+filter. It's **free to host** (GitHub Pages), refreshes itself on a schedule, and is
 **password‑protected**: the data is encrypted at build time and only ever decrypted
 in your browser.
 

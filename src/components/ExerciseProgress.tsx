@@ -33,8 +33,10 @@ export function ExerciseProgress({
   const [selected, setSelected] = useState<string>(summaries[0]?.templateId ?? "");
   const [metric, setMetric] = useState<Metric>("est1RMKg");
 
-  const summary = summaries.find((s) => s.templateId === selected);
-  const points = useMemo(() => exerciseProgress(dataset, selected), [dataset, selected]);
+  // If a range filter removed the selected exercise, fall back to the top one.
+  const summary = summaries.find((s) => s.templateId === selected) ?? summaries[0];
+  const effectiveId = summary?.templateId ?? "";
+  const points = useMemo(() => exerciseProgress(dataset, effectiveId), [dataset, effectiveId]);
 
   const isWeight = metric !== "volumeKg";
   const factor = isWeight && unit === "lb" ? KG_TO_LB : metric === "volumeKg" && unit === "lb" ? KG_TO_LB : 1;
@@ -59,7 +61,7 @@ export function ExerciseProgress({
       hint="Pick a lift to see how it's trending. PRs are marked with a ⭐."
       accent={
         <select
-          value={selected}
+          value={effectiveId}
           onChange={(e) => setSelected(e.target.value)}
           className="max-w-[200px] truncate rounded-xl border border-white/10 bg-ink-900/70 px-3 py-1.5 text-sm text-slate-200 outline-none focus:border-glow-violet/50"
         >
@@ -110,7 +112,7 @@ export function ExerciseProgress({
         <div className="h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 12, right: 12, left: -10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 11 }} tickLine={false} axisLine={false} />
               <YAxis
                 tick={{ fill: "#64748b", fontSize: 11 }}
@@ -131,9 +133,9 @@ export function ExerciseProgress({
                 dataKey="value"
                 name={METRIC_LABEL[metric]}
                 stroke="#8b5cf6"
-                strokeWidth={2.5}
-                dot={{ r: 3, fill: "#8b5cf6" }}
-                activeDot={{ r: 5 }}
+                strokeWidth={2}
+                dot={{ r: 4, fill: "#8b5cf6", stroke: "#10131b", strokeWidth: 2 }}
+                activeDot={{ r: 5, stroke: "#10131b", strokeWidth: 2 }}
               />
               {prPoints.map((p, i) => (
                 <ReferenceDot
@@ -141,8 +143,8 @@ export function ExerciseProgress({
                   x={p.label}
                   y={p.value}
                   r={6}
-                  fill="#fbbf24"
-                  stroke="#0b1020"
+                  fill="#d97706"
+                  stroke="#10131b"
                   strokeWidth={2}
                   isFront
                 />
