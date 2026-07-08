@@ -663,6 +663,75 @@ export interface PRRecord {
   reps: number;
 }
 
+export interface PRWallEntry {
+  templateId: string;
+  title: string;
+  muscle: string | null;
+  /** heaviest weight ever moved on this lift, with the reps of that set */
+  heaviestKg: number;
+  heaviestReps: number;
+  best1RMKg: number;
+  /** when the current best est-1RM was set */
+  date: string;
+  /** sessions that beat a previous best (0 = only the baseline so far) */
+  timesImproved: number;
+  sessions: number;
+}
+
+/** Full per-exercise record wall, newest record first. */
+export function prWall(d: Dataset): PRWallEntry[] {
+  const map = new Map<string, PRWallEntry>();
+  const seenSessions = new Map<string, Set<string>>();
+  for (const w of d.workouts) {
+    const sessionBest = new Map<string, number>();
+    for (const e of w.exercises) {
+      for (const s of e.sets) {
+        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
+        let cur = map.get(e.templateId);
+        if (!cur) {
+          cur = {
+            templateId: e.templateId,
+            title: e.title,
+            muscle: d.templates[e.templateId]?.primaryMuscleGroup ?? null,
+            heaviestKg: 0,
+            heaviestReps: 0,
+            best1RMKg: 0,
+            date: w.startTime,
+            timesImproved: 0,
+            sessions: 0,
+          };
+          map.set(e.templateId, cur);
+        }
+        if (
+          s.weightKg! > cur.heaviestKg ||
+          (s.weightKg! === cur.heaviestKg && s.reps! > cur.heaviestReps)
+        ) {
+          cur.heaviestKg = s.weightKg!;
+          cur.heaviestReps = s.reps!;
+        }
+        const e1 = epley1RM(s.weightKg!, s.reps!);
+        if (e1 > (sessionBest.get(e.templateId) ?? 0)) sessionBest.set(e.templateId, e1);
+        const sessions = seenSessions.get(e.templateId) ?? new Set<string>();
+        sessions.add(w.id);
+        seenSessions.set(e.templateId, sessions);
+      }
+    }
+    for (const [id, e1] of sessionBest) {
+      const cur = map.get(id)!;
+      if (e1 > cur.best1RMKg) {
+        if (cur.best1RMKg > 0) cur.timesImproved += 1;
+        cur.best1RMKg = Math.round(e1 * 10) / 10;
+        cur.date = w.startTime;
+      }
+    }
+  }
+  for (const [id, sessions] of seenSessions) {
+    const cur = map.get(id);
+    if (cur) cur.sessions = sessions.size;
+  }
+  return [...map.values()].sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+}
+
 /** One best-effort PR per exercise, newest achievement first. */
 export function personalRecords(d: Dataset): PRRecord[] {
   const map = new Map<string, PRRecord>();
@@ -692,6 +761,386 @@ export function personalRecords(d: Dataset): PRRecord[] {
 // Achievements (gamification)
 // ----------------------------------------------------------------------------
 
+export type Medal = "bronze" | "silver" | "gold" | "platinum";
+export const MEDALS: Medal[] = ["bronze", "silver", "gold", "platinum"];
+
+export interface BadgeTier {
+  threshold: number;
+  name: string;
+}
+
+interface FamilyDef {
+  id: string;
+  icon: string;
+  label: string;
+  /** how the value reads in progress text, e.g. "sets" */
+  unit: string;
+  tiers: BadgeTier[]; // exactly 4: bronze → platinum
+  describe: (threshold: number) => string;
+  format?: (v: number) => string;
+}
+
+export interface BadgeFamily extends FamilyDef {
+  value: number;
+  /** number of tiers earned, 0–4 */
+  earnedTiers: number;
+  next: { tier: BadgeTier; medal: Medal; progress: number } | null;
+}
+
+export interface TrophySummary {
+  families: BadgeFamily[];
+  earnedBadges: number;
+  totalBadges: number;
+  /** bronze 10 · silver 25 · gold 50 · platinum 100 */
+  score: number;
+  heaviest: { weightKg: number; reps: number; title: string } | null;
+  best1RM: { kg: number; title: string } | null;
+  /** sessions where a previous personal best was beaten */
+  prImprovements: number;
+}
+
+const MEDAL_SCORE: Record<Medal, number> = { bronze: 10, silver: 25, gold: 50, platinum: 100 };
+
+function familyDefs(): FamilyDef[] {
+  const fmt = (v: number) => Math.round(v).toLocaleString();
+  return [
+    {
+      id: "sessions", icon: "🏋️", label: "Sessions", unit: "workouts",
+      tiers: [
+        { threshold: 5, name: "First Five" },
+        { threshold: 15, name: "Regular" },
+        { threshold: 40, name: "Dedicated" },
+        { threshold: 100, name: "Centurion" },
+      ],
+      describe: (n) => `complete ${fmt(n)} workouts`, format: fmt,
+    },
+    {
+      id: "volume", icon: "🐘", label: "Total Volume", unit: "kg lifted",
+      tiers: [
+        { threshold: 1_000, name: "One Tonne Club" },
+        { threshold: 10_000, name: "Ten Tonnes" },
+        { threshold: 50_000, name: "Fifty Tonnes" },
+        { threshold: 150_000, name: "Freight Train" },
+      ],
+      describe: (n) => `lift ${fmt(n)} kg of total volume`, format: fmt,
+    },
+    {
+      id: "hours", icon: "⏱️", label: "Gym Time", unit: "hours",
+      tiers: [
+        { threshold: 1, name: "Hour of Power" },
+        { threshold: 10, name: "Time Under Tension" },
+        { threshold: 30, name: "Thirty Deep" },
+        { threshold: 75, name: "Iron Hours" },
+      ],
+      describe: (n) => `train for ${fmt(n)} total hour${n > 1 ? "s" : ""}`,
+      format: (v) => v.toFixed(1),
+    },
+    {
+      id: "sets", icon: "📦", label: "Total Sets", unit: "sets",
+      tiers: [
+        { threshold: 100, name: "Century Club" },
+        { threshold: 300, name: "Set Builder" },
+        { threshold: 750, name: "Volume Dealer" },
+        { threshold: 1_500, name: "Set Machine" },
+      ],
+      describe: (n) => `log ${fmt(n)} total sets`, format: fmt,
+    },
+    {
+      id: "reps", icon: "🔁", label: "Total Reps", unit: "reps",
+      tiers: [
+        { threshold: 1_000, name: "The Grand" },
+        { threshold: 3_000, name: "Rep Collector" },
+        { threshold: 7_500, name: "Rep Dealer" },
+        { threshold: 15_000, name: "Rep Tycoon" },
+      ],
+      describe: (n) => `perform ${fmt(n)} total reps`, format: fmt,
+    },
+    {
+      id: "weeksOnGoal", icon: "🎯", label: "Weeks on Goal", unit: "weeks",
+      tiers: [
+        { threshold: 1, name: "On Target" },
+        { threshold: 4, name: "Habit Forming" },
+        { threshold: 12, name: "Quarter Master" },
+        { threshold: 26, name: "Half-Year Strong" },
+      ],
+      describe: (n) => `hit your weekly goal in ${fmt(n)} week${n > 1 ? "s" : ""}`, format: fmt,
+    },
+    {
+      id: "goalStreak", icon: "🔥", label: "Goal Streak", unit: "weeks running",
+      tiers: [
+        { threshold: 2, name: "Back to Back" },
+        { threshold: 4, name: "Locked In" },
+        { threshold: 8, name: "Unstoppable" },
+        { threshold: 16, name: "Machine Mode" },
+      ],
+      describe: (n) => `hit your weekly goal ${fmt(n)} weeks in a row`, format: fmt,
+    },
+    {
+      id: "exercises", icon: "🧭", label: "Exercise Variety", unit: "exercises",
+      tiers: [
+        { threshold: 5, name: "Sampler" },
+        { threshold: 10, name: "Explorer" },
+        { threshold: 20, name: "Connoisseur" },
+        { threshold: 35, name: "Completionist" },
+      ],
+      describe: (n) => `try ${fmt(n)} different exercises`, format: fmt,
+    },
+    {
+      id: "prs", icon: "⭐", label: "Records Beaten", unit: "PRs",
+      tiers: [
+        { threshold: 3, name: "Record Setter" },
+        { threshold: 10, name: "Record Breaker" },
+        { threshold: 25, name: "PR Hunter" },
+        { threshold: 60, name: "Limit Pusher" },
+      ],
+      describe: (n) => `beat your own record ${fmt(n)} times`, format: fmt,
+    },
+  ];
+}
+
+/** Sessions where an already-tracked exercise beat its previous best est-1RM. */
+export function countPrImprovements(d: Dataset): number {
+  const best = new Map<string, number>();
+  let improvements = 0;
+  for (const w of d.workouts) {
+    // Session best per exercise first, so multiple slots don't double count.
+    const sessionBest = new Map<string, number>();
+    for (const e of w.exercises) {
+      for (const s of e.sets) {
+        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
+        const e1 = epley1RM(s.weightKg!, s.reps!);
+        if (e1 > (sessionBest.get(e.templateId) ?? 0)) sessionBest.set(e.templateId, e1);
+      }
+    }
+    for (const [id, e1] of sessionBest) {
+      const prev = best.get(id);
+      if (prev !== undefined && e1 > prev) improvements += 1;
+      if (prev === undefined || e1 > prev) best.set(id, e1);
+    }
+  }
+  return improvements;
+}
+
+export function trophySummary(d: Dataset, ov: Overview, cons: Consistency): TrophySummary {
+  const prImprovements = countPrImprovements(d);
+  const values: Record<string, number> = {
+    sessions: ov.workouts,
+    volume: ov.totalVolumeKg,
+    hours: ov.totalDurationSec / 3600,
+    sets: ov.totalSets,
+    reps: ov.totalReps,
+    weeksOnGoal: cons.weeksMetTarget,
+    goalStreak: cons.longestWeekStreak,
+    exercises: ov.uniqueExercises,
+    prs: prImprovements,
+  };
+
+  const families: BadgeFamily[] = familyDefs().map((f) => {
+    const value = values[f.id] ?? 0;
+    const earnedTiers = f.tiers.filter((t) => value >= t.threshold).length;
+    const nextTier = f.tiers[earnedTiers];
+    return {
+      ...f,
+      value,
+      earnedTiers,
+      next: nextTier
+        ? {
+            tier: nextTier,
+            medal: MEDALS[earnedTiers],
+            progress: Math.max(0, Math.min(1, value / nextTier.threshold)),
+          }
+        : null,
+    };
+  });
+
+  let earnedBadges = 0;
+  let score = 0;
+  for (const f of families) {
+    earnedBadges += f.earnedTiers;
+    for (let i = 0; i < f.earnedTiers; i++) score += MEDAL_SCORE[MEDALS[i]];
+  }
+
+  // Hall-of-fame numbers
+  let heaviest: TrophySummary["heaviest"] = null;
+  let best1RM: TrophySummary["best1RM"] = null;
+  for (const w of d.workouts) {
+    for (const e of w.exercises) {
+      for (const s of e.sets) {
+        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
+        if (!heaviest || s.weightKg! > heaviest.weightKg) {
+          heaviest = { weightKg: s.weightKg!, reps: s.reps!, title: e.title };
+        }
+        const e1 = epley1RM(s.weightKg!, s.reps!);
+        if (!best1RM || e1 > best1RM.kg) {
+          best1RM = { kg: Math.round(e1 * 10) / 10, title: e.title };
+        }
+      }
+    }
+  }
+
+  return {
+    families,
+    earnedBadges,
+    totalBadges: families.length * 4,
+    score,
+    heaviest,
+    best1RM,
+    prImprovements,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Journey — milestone timeline replayed from the workout history
+// ----------------------------------------------------------------------------
+
+export interface JourneyEvent {
+  date: string; // ISO
+  emoji: string;
+  title: string;
+  detail?: string;
+  kind: "badge" | "pr" | "start" | "week";
+}
+
+export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
+  const events: JourneyEvent[] = [];
+  if (d.workouts.length === 0) return events;
+
+  const defs = familyDefs();
+  const crossed = new Set<string>(); // "familyId:threshold"
+
+  // Cumulative state, replayed workout by workout.
+  let sessions = 0;
+  let volume = 0;
+  let seconds = 0;
+  let sets = 0;
+  let reps = 0;
+  const exercises = new Set<string>();
+  const best = new Map<string, number>();
+  const weekCounts = new Map<string, number>();
+  let weeksMet = 0;
+  let streak = 0;
+  let prevWeekKey: string | null = null;
+  let prevWeekMet = false;
+  let improvements = 0;
+
+  const checkFamilies = (w: DatasetWorkoutLike) => {
+    const values: Record<string, number> = {
+      sessions,
+      volume,
+      hours: seconds / 3600,
+      sets,
+      reps,
+      weeksOnGoal: weeksMet,
+      goalStreak: streak,
+      exercises: exercises.size,
+      prs: improvements,
+    };
+    for (const f of defs) {
+      for (let i = 0; i < f.tiers.length; i++) {
+        const t = f.tiers[i];
+        const key = `${f.id}:${t.threshold}`;
+        if (!crossed.has(key) && (values[f.id] ?? 0) >= t.threshold) {
+          crossed.add(key);
+          events.push({
+            date: w.startTime,
+            emoji: f.icon,
+            title: `${t.name} unlocked`,
+            detail: `${capitalize(MEDALS[i])} · ${f.describe(t.threshold)}`,
+            kind: "badge",
+          });
+        }
+      }
+    }
+  };
+
+  events.push({
+    date: d.workouts[0].startTime,
+    emoji: "🌱",
+    title: "The journey begins",
+    detail: d.workouts[0].title,
+    kind: "start",
+  });
+
+  for (const w of d.workouts) {
+    sessions += 1;
+    seconds += w.durationSeconds;
+
+    // Weekly goal bookkeeping: when a week's count reaches the target, log it.
+    const wk = isoWeek(w.startTime).key;
+    if (prevWeekKey !== null && wk !== prevWeekKey) {
+      if (!prevWeekMet) streak = 0; // a completed week that missed the goal breaks the run
+      prevWeekMet = false;
+    }
+    prevWeekKey = wk;
+    const wkCount = (weekCounts.get(wk) ?? 0) + 1;
+    weekCounts.set(wk, wkCount);
+    if (wkCount === target) {
+      weeksMet += 1;
+      streak += 1;
+      prevWeekMet = true;
+      events.push({
+        date: w.startTime,
+        emoji: "✅",
+        title: "Weekly goal hit",
+        detail: `${target} sessions this week`,
+        kind: "week",
+      });
+    }
+
+    const sessionBest = new Map<string, { e1: number; title: string }>();
+    for (const e of w.exercises) {
+      exercises.add(e.templateId);
+      for (const s of e.sets) {
+        sets += 1;
+        reps += s.reps ?? 0;
+        volume += setVolumeKg(s);
+        if (isStrengthSet(s) && isWorkingSet(s)) {
+          const e1 = epley1RM(s.weightKg!, s.reps!);
+          const cur = sessionBest.get(e.templateId);
+          if (!cur || e1 > cur.e1) sessionBest.set(e.templateId, { e1, title: e.title });
+        }
+      }
+    }
+    for (const [id, { e1, title }] of sessionBest) {
+      const prev = best.get(id);
+      if (prev !== undefined && e1 > prev) {
+        improvements += 1;
+        events.push({
+          date: w.startTime,
+          emoji: "⭐",
+          title: `New ${title} record`,
+          detail: `est. 1RM ${round1kg(e1)} kg (+${round1kg(e1 - prev)})`,
+          kind: "pr",
+        });
+      }
+      if (prev === undefined || e1 > prev) best.set(id, e1);
+    }
+
+    checkFamilies(w);
+  }
+
+  // Newest first.
+  return events.reverse();
+}
+
+interface DatasetWorkoutLike {
+  startTime: string;
+  title: string;
+  durationSeconds: number;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function round1kg(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+// ----------------------------------------------------------------------------
+// Flat achievement list (kept for the insights "next badge in reach" nudge)
+// ----------------------------------------------------------------------------
+
 export interface Achievement {
   id: string;
   emoji: string;
@@ -701,40 +1150,25 @@ export interface Achievement {
   progress: number; // 0..1
 }
 
-export function achievements(_d: Dataset, ov: Overview, cons: Consistency): Achievement[] {
-  const tonnage = ov.totalVolumeKg;
-  const hours = ov.totalDurationSec / 3600;
-
-  const mk = (
-    id: string,
-    emoji: string,
-    title: string,
-    description: string,
-    value: number,
-    goal: number,
-  ): Achievement => ({
-    id,
-    emoji,
-    title,
-    description,
-    earned: value >= goal,
-    progress: Math.max(0, Math.min(1, goal === 0 ? 1 : value / goal)),
-  });
-
-  return [
-    mk("first", "🌱", "First Steps", "Log your first workout", ov.workouts, 1),
-    mk("five", "🔥", "Getting Consistent", "Complete 5 workouts", ov.workouts, 5),
-    mk("twenty", "🏋️", "Committed", "Complete 20 workouts", ov.workouts, 20),
-    mk("fifty", "💎", "Iron Habit", "Complete 50 workouts", ov.workouts, 50),
-    mk("ontarget", "🎯", "On Target", "Hit your weekly session goal", cons.weeksMetTarget, 1),
-    mk("lockedin", "📆", "Locked In", "Hit your weekly goal 4 weeks running", cons.longestWeekStreak, 4),
-    mk("ton", "🐘", "One Tonne Club", "Lift 1,000 kg of total volume", tonnage, 1000),
-    mk("tenton", "🚛", "Ten Tonnes", "Lift 10,000 kg of total volume", tonnage, 10000),
-    mk("hour", "⏱️", "Hour of Power", "Train for 1 total hour", hours, 1),
-    mk("tenhours", "🕙", "Time Under Tension", "Train for 10 total hours", hours, 10),
-    mk("explorer", "🧭", "Explorer", "Try 10 different exercises", ov.uniqueExercises, 10),
-    mk("century", "💯", "Century Club", "Log 100 total sets", ov.totalSets, 100),
-  ];
+export function achievements(d: Dataset, ov: Overview, cons: Consistency): Achievement[] {
+  const summary = trophySummary(d, ov, cons);
+  const out: Achievement[] = [];
+  for (const f of summary.families) {
+    for (let i = 0; i < f.earnedTiers; i++) {
+      const t = f.tiers[i];
+      out.push({
+        id: `${f.id}:${t.threshold}`, emoji: f.icon, title: t.name,
+        description: f.describe(t.threshold), earned: true, progress: 1,
+      });
+    }
+    if (f.next) {
+      out.push({
+        id: `${f.id}:${f.next.tier.threshold}`, emoji: f.icon, title: f.next.tier.name,
+        description: f.describe(f.next.tier.threshold), earned: false, progress: f.next.progress,
+      });
+    }
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------------------

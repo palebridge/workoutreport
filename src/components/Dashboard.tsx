@@ -5,16 +5,17 @@ import {
   categorySplit,
   consistency,
   exerciseSummaries,
+  journeyEvents,
   muscleBalance,
   overview,
-  personalRecords,
+  prWall,
+  trophySummary,
   weekdayRhythm,
   weeklyTrend,
   workoutTrend,
 } from "../data/metrics";
 import type { Dataset } from "../data/types";
 import { useWeeklyTarget } from "../hooks/useWeeklyTarget";
-import { Achievements } from "./Achievements";
 import { BodyMeasurements } from "./BodyMeasurements";
 import { ConsistencyHeatmap } from "./ConsistencyHeatmap";
 import { ExerciseProgress } from "./ExerciseProgress";
@@ -24,8 +25,10 @@ import { MuscleBalance } from "./MuscleBalance";
 import { RangeFilter } from "./RangeFilter";
 import type { RangeWeeks } from "./RangeFilter";
 import { RecentWorkouts } from "./RecentWorkouts";
+import { Journey } from "./Journey";
 import { StatCounters } from "./StatCounters";
 import { TimeTrend } from "./TimeTrend";
+import { TrophyCase } from "./TrophyCase";
 import { UnitToggle } from "./UnitToggle";
 import { VolumeTrend } from "./VolumeTrend";
 import { WeekRhythm } from "./WeekRhythm";
@@ -59,7 +62,9 @@ export function Dashboard({
   // ---- All-time metrics (hero, totals, calendar, records, badges) ----
   const ov = useMemo(() => overview(dataset), [dataset]);
   const cons = useMemo(() => consistency(dataset, target), [dataset, target]);
-  const prs = useMemo(() => personalRecords(dataset), [dataset]);
+  const trophy = useMemo(() => trophySummary(dataset, ov, cons), [dataset, ov, cons]);
+  const wall = useMemo(() => prWall(dataset), [dataset]);
+  const journey = useMemo(() => journeyEvents(dataset, target), [dataset, target]);
   const ach = useMemo(() => achievements(dataset, ov, cons), [dataset, ov, cons]);
   const musclesAll = useMemo(() => muscleBalance(dataset), [dataset]);
   const insights = useMemo(
@@ -148,7 +153,8 @@ export function Dashboard({
         </div>
 
         <ConsistencyHeatmap cons={cons} />
-        <Achievements achievements={ach} records={prs} />
+        <TrophyCase trophy={trophy} wall={wall} />
+        <Journey events={journey} />
 
         <footer className="pt-4 text-center text-xs text-slate-600">
           Data from Hevy · synced {new Date(dataset.generatedAt).toLocaleDateString()} · decrypted in your browser
