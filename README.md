@@ -32,6 +32,13 @@ Hevy API ──(GitHub Action, every 6h)──▶ sync ──▶ dataset.json
 > **Security note:** because the encrypted blob is publicly hosted, a *weak*
 > password could be brute‑forced offline. Choose a long, strong passphrase.
 
+**Remember on this device:** ticking the checkbox at the gate stores the
+password encrypted under a non‑extractable device key (IndexedDB + Web Crypto),
+so it is never kept in plain text, and the dashboard auto‑unlocks on this
+browser from then on. The 🔒 button locks the dashboard *and* forgets the
+device. Anyone with access to your unlocked browser profile can open the
+dashboard while it's remembered — don't tick it on shared machines.
+
 ## One‑time setup
 
 1. **Add two repository secrets** — Settings → *Secrets and variables* → *Actions*:

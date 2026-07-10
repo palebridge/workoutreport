@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { decryptDataset, fetchEncryptedPayload, WrongPasswordError } from "../crypto/decrypt";
+import { forgetPassword, recallPassword, rememberPassword } from "../crypto/remember";
 import type { Dataset, EncryptedPayload } from "../data/types";
 
 type Status = "loading" | "ready" | "decrypting" | "error";
@@ -15,25 +16,41 @@ export function Gate({
   const [payload, setPayload] = useState<EncryptedPayload | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    fetchEncryptedPayload(baseUrl)
-      .then((p) => {
+    (async () => {
+      try {
+        // Fetch the blob and any remembered password in parallel.
+        const [p, saved] = await Promise.all([fetchEncryptedPayload(baseUrl), recallPassword()]);
         if (!alive) return;
         setPayload(p);
-        setStatus("ready");
-      })
-      .catch((e) => {
+
+        // Auto-unlock if this device remembers the password.
+        if (saved) {
+          try {
+            const data = await decryptDataset(p, saved);
+            if (!alive) return;
+            onUnlock(data, saved);
+            return;
+          } catch {
+            // Password changed since it was remembered — forget and ask.
+            await forgetPassword();
+          }
+        }
+        if (alive) setStatus("ready");
+      } catch (e) {
         if (!alive) return;
         setError(e instanceof Error ? e.message : "Failed to load data.");
         setStatus("error");
-      });
+      }
+    })();
     return () => {
       alive = false;
     };
-  }, [baseUrl]);
+  }, [baseUrl, onUnlock]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,6 +59,8 @@ export function Gate({
     setError(null);
     try {
       const data = await decryptDataset(payload, password);
+      if (remember) await rememberPassword(password);
+      else await forgetPassword();
       onUnlock(data, password);
     } catch (err) {
       setStatus("ready");
@@ -71,7 +90,9 @@ export function Gate({
           Your training, decrypted in your browser.
         </p>
 
-        {status === "error" ? (
+        {status === "loading" ? (
+          <p className="mt-6 text-sm text-slate-500">Unlocking…</p>
+        ) : status === "error" ? (
           <p className="mt-6 rounded-xl border border-glow-rose/30 bg-glow-rose/10 px-3 py-2 text-sm text-glow-rose">
             {error}
           </p>
@@ -86,16 +107,21 @@ export function Gate({
               autoComplete="current-password"
               className="w-full rounded-xl border border-white/10 bg-ink-900/60 px-4 py-3 text-center text-white placeholder:text-slate-500 outline-none transition focus:border-glow-violet/60 focus:ring-2 focus:ring-glow-violet/30"
             />
+            <label className="flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[#8b5cf6]"
+              />
+              Remember on this device
+            </label>
             <button
               type="submit"
               disabled={status !== "ready" || !password}
               className="w-full rounded-xl bg-gradient-to-r from-glow-violet to-glow-indigo px-4 py-3 font-medium text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {status === "loading"
-                ? "Loading…"
-                : status === "decrypting"
-                  ? "Unlocking…"
-                  : "Unlock"}
+              {status === "decrypting" ? "Unlocking…" : "Unlock"}
             </button>
             {error && <p className="text-sm text-glow-rose">{error}</p>}
           </form>

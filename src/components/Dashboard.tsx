@@ -15,6 +15,7 @@ import {
   weeklyTrend,
   workoutTrend,
 } from "../data/metrics";
+import { forgetPassword } from "../crypto/remember";
 import type { Dataset } from "../data/types";
 import { useWeeklyTarget } from "../hooks/useWeeklyTarget";
 import { BodyMeasurements } from "./BodyMeasurements";
@@ -114,8 +115,11 @@ export function Dashboard({
             {refreshLabel(status)}
           </button>
           <button
-            onClick={() => location.reload()}
-            title="Lock dashboard"
+            onClick={() => {
+              // Lock = forget this device, then back to the gate.
+              void forgetPassword().finally(() => location.reload());
+            }}
+            title="Lock dashboard and forget this device"
             className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-400 transition hover:text-slate-200"
           >
             🔒
