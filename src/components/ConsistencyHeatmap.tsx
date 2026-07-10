@@ -14,7 +14,7 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
   return (
     <Card
       title={<>📅 Consistency</>}
-      hint="Each square is a day, brighter means more sessions. The bar under a week shows it hit your goal."
+      hint="Each square is a day, brighter means more sessions. A green underline marks a week that hit your goal."
       accent={
         <div className="flex flex-col items-end gap-1">
           <div className="inline-flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs font-medium">
@@ -70,10 +70,11 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
                     style={{ background: cell ? levelColor(cell.count) : "transparent" }}
                   />
                 ))}
-                {/* On-goal marker */}
+                {/* Goal marker: a green underline only on weeks that hit the goal */}
                 <div
-                  className="mt-[2px] h-[3px] w-[13px] rounded-full"
-                  style={{ background: col.onTarget ? "#34d399" : "rgba(255,255,255,0.05)" }}
+                  className="mt-[3px] h-[4px] w-[13px] rounded-full"
+                  title={col.onTarget ? "Hit your weekly goal" : ""}
+                  style={{ background: col.onTarget ? "#059669" : "transparent" }}
                 />
               </div>
             ))}
@@ -93,12 +94,18 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
         <span>
           {cons.weeksMetTarget}/{cons.totalWeeks} weeks on goal · {cons.activeDays} active days
         </span>
-        <div className="flex items-center gap-1.5">
-          <span>Less</span>
-          {[0, 1, 2, 3].map((l) => (
-            <span key={l} className="h-[11px] w-[11px] rounded-[3px]" style={{ background: levelColor(l) }} />
-          ))}
-          <span>More</span>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span className="h-[4px] w-[13px] rounded-full" style={{ background: "#059669" }} />
+            week hit goal
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span>Less</span>
+            {[0, 1, 2, 3].map((l) => (
+              <span key={l} className="h-[11px] w-[11px] rounded-[3px]" style={{ background: levelColor(l) }} />
+            ))}
+            <span>More</span>
+          </span>
         </div>
       </div>
     </Card>
