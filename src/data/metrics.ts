@@ -546,6 +546,59 @@ export function weeklyTrend(d: Dataset): WeekPoint[] {
 }
 
 // ----------------------------------------------------------------------------
+// Routine progression — how a repeated workout develops over time
+// ----------------------------------------------------------------------------
+
+export interface RoutinePoint {
+  date: string;
+  label: string;
+  volumeKg: number;
+  durationMin: number;
+  sets: number;
+}
+
+export interface RoutineSeries {
+  /** routineId when Hevy provides one, else the workout title */
+  key: string;
+  title: string;
+  timesPerformed: number;
+  points: RoutinePoint[]; // oldest first
+}
+
+export function routineProgress(d: Dataset): RoutineSeries[] {
+  const map = new Map<string, RoutineSeries>();
+  for (const w of d.workouts) {
+    const key = w.routineId ?? w.title;
+    let volumeKg = 0;
+    let sets = 0;
+    for (const e of w.exercises)
+      for (const s of e.sets) {
+        sets += 1;
+        volumeKg += setVolumeKg(s);
+      }
+    const cur =
+      map.get(key) ??
+      ({ key, title: w.title, timesPerformed: 0, points: [] } as RoutineSeries);
+    cur.timesPerformed += 1;
+    cur.title = w.title; // keep the most recent name if it was renamed
+    cur.points.push({
+      date: w.startTime,
+      label: shortDate(w.startTime),
+      volumeKg: Math.round(volumeKg),
+      durationMin: Math.round(w.durationSeconds / 60),
+      sets,
+    });
+    map.set(key, cur);
+  }
+  // Most-performed first, ties by most recent.
+  return [...map.values()].sort(
+    (a, b) =>
+      b.timesPerformed - a.timesPerformed ||
+      Date.parse(b.points[b.points.length - 1].date) - Date.parse(a.points[a.points.length - 1].date),
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Per-exercise progression + PRs
 // ----------------------------------------------------------------------------
 

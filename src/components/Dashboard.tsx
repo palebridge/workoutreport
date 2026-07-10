@@ -9,6 +9,7 @@ import {
   muscleBalance,
   overview,
   prWall,
+  routineProgress,
   trophySummary,
   weekdayRhythm,
   weeklyTrend,
@@ -25,6 +26,7 @@ import { MuscleBalance } from "./MuscleBalance";
 import { RangeFilter } from "./RangeFilter";
 import type { RangeWeeks } from "./RangeFilter";
 import { RecentWorkouts } from "./RecentWorkouts";
+import { RoutineProgress } from "./RoutineProgress";
 import { Journey } from "./Journey";
 import { StatCounters } from "./StatCounters";
 import { TimeTrend } from "./TimeTrend";
@@ -90,6 +92,7 @@ export function Dashboard({
   const rhythm = useMemo(() => weekdayRhythm(scoped), [scoped]);
   const weeklySessions = useMemo(() => consistency(scoped, target).weeks, [scoped, target]);
   const summaries = useMemo(() => exerciseSummaries(scoped), [scoped]);
+  const routines = useMemo(() => routineProgress(scoped), [scoped]);
   const scopedOv = useMemo(() => (range === 0 ? ov : overview(scoped)), [range, ov, scoped]);
 
   return (
@@ -140,6 +143,7 @@ export function Dashboard({
           <WeeklySessions weeks={weeklySessions} target={target} />
         </div>
 
+        <RoutineProgress routines={routines} />
         <ExerciseProgress dataset={scoped} summaries={summaries} />
         <BodyMeasurements measurements={scoped.bodyMeasurements} />
         <RecentWorkouts dataset={scoped} />
