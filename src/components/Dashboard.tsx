@@ -16,13 +16,17 @@ import {
   workoutTrend,
 } from "../data/metrics";
 import { forgetPassword } from "../crypto/remember";
+import { bossBattle, buddy, ironMountain } from "../data/game";
 import type { Dataset } from "../data/types";
 import { useWeeklyTarget } from "../hooks/useWeeklyTarget";
 import { BodyMeasurements } from "./BodyMeasurements";
+import { BossBattle } from "./BossBattle";
 import { ConsistencyHeatmap } from "./ConsistencyHeatmap";
 import { ExerciseProgress } from "./ExerciseProgress";
+import { GymBuddy } from "./GymBuddy";
 import { Hero } from "./Hero";
 import { Insights } from "./Insights";
+import { IronMountain } from "./IronMountain";
 import { MuscleBalance } from "./MuscleBalance";
 import { RangeFilter } from "./RangeFilter";
 import type { RangeWeeks } from "./RangeFilter";
@@ -74,6 +78,11 @@ export function Dashboard({
     () => buildInsights(dataset, ov, cons, musclesAll, ach),
     [dataset, ov, cons, musclesAll, ach],
   );
+
+  // ---- Game layer (always full-history, never range-scoped) ----
+  const buddyState = useMemo(() => buddy(dataset, ov, musclesAll, trophy), [dataset, ov, musclesAll, trophy]);
+  const boss = useMemo(() => bossBattle(dataset), [dataset]);
+  const mountain = useMemo(() => ironMountain(dataset), [dataset]);
 
   // ---- Range-scoped dataset: the filter row scopes every chart below it ----
   const scoped = useMemo(() => {
@@ -129,6 +138,13 @@ export function Dashboard({
 
       <div className="space-y-5">
         <Hero user={dataset.user} ov={ov} cons={cons} generatedAt={dataset.generatedAt} />
+
+        {/* Game layer */}
+        <div className="grid gap-5 lg:grid-cols-2">
+          <GymBuddy state={buddyState} />
+          <BossBattle report={boss} />
+        </div>
+
         <StatCounters ov={ov} cons={cons} />
         <Insights insights={insights} />
 
@@ -160,6 +176,7 @@ export function Dashboard({
           <span className="flex-1 border-t border-white/5" />
         </div>
 
+        <IronMountain state={mountain} />
         <ConsistencyHeatmap cons={cons} />
         <TrophyCase trophy={trophy} wall={wall} />
         <Journey events={journey} />
