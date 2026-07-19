@@ -66,9 +66,13 @@ export class HevyClient {
     const url = new URL(BASE + path);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
 
-    // Retry transient failures with a short exponential backoff.
+    // Retry transient failures (network errors, 429, 5xx) with a patient
+    // exponential backoff — scheduled CI runs should ride out brief API
+    // outages rather than fail the deploy. Non-transient HTTP errors (e.g.
+    // 401 from a revoked key) fail immediately so real problems stay loud.
+    const ATTEMPTS = 6;
     let lastErr: unknown;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       try {
         const res = await fetch(url, { headers: { "api-key": this.apiKey, accept: "application/json" } });
         if (res.status === 429 || res.status >= 500) {
@@ -76,12 +80,13 @@ export class HevyClient {
         }
         if (!res.ok) {
           const body = await res.text().catch(() => "");
-          throw new Error(`HTTP ${res.status} for ${path}: ${body.slice(0, 200)}`);
+          throw new NonRetryableError(`HTTP ${res.status} for ${path}: ${body.slice(0, 200)}`);
         }
         return (await res.json()) as T;
       } catch (err) {
+        if (err instanceof NonRetryableError) throw err;
         lastErr = err;
-        if (attempt < 3) await sleep(500 * 2 ** attempt);
+        if (attempt < ATTEMPTS - 1) await sleep(2000 * 2 ** attempt); // 2s → 32s
       }
     }
     throw lastErr;
@@ -147,6 +152,9 @@ export class HevyClient {
     return out;
   }
 }
+
+/** An HTTP error that retrying can't fix (auth failure, bad request, …). */
+class NonRetryableError extends Error {}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
