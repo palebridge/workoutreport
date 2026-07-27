@@ -77,8 +77,20 @@ export function AnimatedNumber({
 // Misc primitives
 // ----------------------------------------------------------------------------
 
-export function Pill({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <span className={`pill ${className}`}>{children}</span>;
+export function Pill({
+  children,
+  className = "",
+  title,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span className={`pill ${className}`} title={title}>
+      {children}
+    </span>
+  );
 }
 
 export function EmptyHint({ children }: { children: ReactNode }) {

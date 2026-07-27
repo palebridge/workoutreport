@@ -47,6 +47,16 @@ export function ExerciseProgress({
   }));
   const prPoints = chartData.filter((d) => d.isPR);
 
+  // Change in the selected metric from the first session that recorded it to
+  // the most recent one. Computed on raw kg — a ratio is unit-independent.
+  const recorded = points.filter((p) => p[metric] > 0);
+  const deltaPct =
+    recorded.length >= 2
+      ? Math.round(
+          ((recorded[recorded.length - 1][metric] - recorded[0][metric]) / recorded[0][metric]) * 100,
+        )
+      : null;
+
   if (!summary) {
     return (
       <Card title={<>🎯 Exercise Progress</>}>
@@ -80,6 +90,15 @@ export function ExerciseProgress({
         {summary.template?.primaryMuscleGroup && (
           <Pill className="!text-cyan-300 capitalize">
             {summary.template.primaryMuscleGroup.replace(/_/g, " ")}
+          </Pill>
+        )}
+        {deltaPct != null && (
+          <Pill
+            className={deltaPct >= 0 ? "!text-emerald-300" : "!text-amber-300"}
+            title={`${METRIC_LABEL[metric]} since your first session with this lift`}
+          >
+            {deltaPct >= 0 ? "▲" : "▼"} {deltaPct >= 0 ? "+" : ""}
+            {deltaPct}% since first session
           </Pill>
         )}
         <div className="ml-auto inline-flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs font-medium">
