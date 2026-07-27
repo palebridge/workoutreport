@@ -2,19 +2,27 @@ import type { Consistency } from "../data/metrics";
 import { TARGET_OPTIONS, useWeeklyTarget } from "../hooks/useWeeklyTarget";
 import { Card } from "./ui";
 
-const MIN_WEEKS = 12;
-const MAX_WEEKS = 53;
+// The strip always starts at the week of the first workout — never before it —
+// and any spare columns are *upcoming* weeks, drawn as outlines. So the chart
+// reads as "the journey so far, and the road ahead" instead of padding the past
+// with weeks that predate the log.
+const RUNWAY = 2; // weeks shown ahead once history is long
+const MIN_COLS = 10; // keeps the strip a sensible width early on
+const MAX_COLS = 53;
+const GAP = 3;
+const LABEL_W = 15;
 const DAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
   const { target, setTarget } = useWeeklyTarget();
   const columns = buildColumns(cons.byDay, target);
+  const cell = cellSize(columns.length);
 
   return (
     <Card
       title={<>📅 Consistency</>}
-      hint="Each square is a day, brighter means more sessions. A green underline marks a week that hit your goal."
+      hint="Each square is a day, brighter means more sessions. A green underline marks a week that hit your goal — outlined squares are still ahead of you."
       accent={
         <div className="flex flex-col items-end gap-1">
           <div className="inline-flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs font-medium">
@@ -35,12 +43,13 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
         </div>
       }
     >
-      <div className="overflow-x-auto pb-1">
-        <div className="inline-flex flex-col gap-1">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:gap-8">
+      <div className="min-w-0 flex-1 overflow-x-auto pb-1">
+        <div className="flex w-fit flex-col gap-1">
           {/* Month labels, aligned over the columns */}
-          <div className="flex gap-[3px] pl-[18px]">
+          <div className="flex" style={{ gap: GAP, paddingLeft: LABEL_W + GAP }}>
             {columns.map((col, i) => (
-              <div key={i} className="relative h-3 w-[13px]">
+              <div key={i} className="relative h-3" style={{ width: cell }}>
                 {col.monthLabel && (
                   <span className="absolute left-0 top-0 whitespace-nowrap text-[9px] text-slate-500">
                     {col.monthLabel}
@@ -51,30 +60,44 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
           </div>
 
           {/* Day labels + the grid */}
-          <div className="flex gap-[3px]">
-            <div className="flex w-[15px] flex-col gap-[3px] text-center text-[9px] leading-[13px] text-slate-500">
+          <div className="flex" style={{ gap: GAP }}>
+            <div
+              className="flex flex-col text-center text-[9px] text-slate-500"
+              style={{ width: LABEL_W, gap: GAP }}
+            >
               {DAY_LABELS.map((d, i) => (
-                <span key={i} className="h-[13px]">
+                <span key={i} style={{ height: cell, lineHeight: `${cell}px` }}>
                   {d}
                 </span>
               ))}
             </div>
 
             {columns.map((col, wi) => (
-              <div key={wi} className="flex flex-col gap-[3px]">
-                {col.cells.map((cell, di) => (
+              <div key={wi} className="flex flex-col" style={{ gap: GAP }}>
+                {col.cells.map((c, di) => (
                   <div
                     key={di}
-                    title={cell ? `${cell.date} · ${cell.count} workout${cell.count > 1 ? "s" : ""}` : ""}
-                    className="h-[13px] w-[13px] rounded-[3px]"
-                    style={{ background: cell ? levelColor(cell.count) : "transparent" }}
+                    title={c ? `${c.date} · ${c.count} workout${c.count > 1 ? "s" : ""}` : ""}
+                    className="rounded-[3px]"
+                    style={{
+                      width: cell,
+                      height: cell,
+                      // A past day with no session is a filled faint square; a
+                      // day still to come is an outline. Fill vs. outline is
+                      // what separates "trained nothing" from "not yet".
+                      background: c ? levelColor(c.count) : "transparent",
+                      border: c ? undefined : "1px dashed rgba(255,255,255,0.10)",
+                    }}
                   />
                 ))}
                 {/* Goal marker: a green underline only on weeks that hit the goal */}
                 <div
-                  className="mt-[3px] h-[4px] w-[13px] rounded-full"
-                  title={col.onTarget ? "Hit your weekly goal" : ""}
-                  style={{ background: col.onTarget ? "#059669" : "transparent" }}
+                  className="mt-[3px] h-[4px] rounded-full"
+                  title={!col.isFuture && col.onTarget ? "Hit your weekly goal" : ""}
+                  style={{
+                    width: cell,
+                    background: !col.isFuture && col.onTarget ? "#059669" : "transparent",
+                  }}
                 />
               </div>
             ))}
@@ -82,15 +105,16 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
         </div>
       </div>
 
-      {/* Weekly stats */}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      {/* Weekly stats — sit alongside the strip on wide screens */}
+      <div className="grid shrink-0 grid-cols-4 gap-2 lg:grid-cols-2">
         <Chip label="This week" value={`${cons.sessionsThisWeek}/${target}`} tone="violet" />
         <Chip label="Week streak" value={`${cons.weeksOnTargetStreak}w`} tone="cyan" />
         <Chip label="Avg / wk" value={cons.avgPerWeek.toFixed(1)} tone="violet" />
         <Chip label="Best week" value={`${cons.bestWeek}`} tone="cyan" />
       </div>
+      </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
         <span>
           {cons.weeksMetTarget}/{cons.totalWeeks} weeks on goal · {cons.activeDays} active days
         </span>
@@ -98,6 +122,13 @@ export function ConsistencyHeatmap({ cons }: { cons: Consistency }) {
           <span className="flex items-center gap-1.5">
             <span className="h-[4px] w-[13px] rounded-full" style={{ background: "#059669" }} />
             week hit goal
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span
+              className="h-[11px] w-[11px] rounded-[3px]"
+              style={{ border: "1px dashed rgba(255,255,255,0.10)" }}
+            />
+            ahead
           </span>
           <span className="flex items-center gap-1.5">
             <span>Less</span>
@@ -121,6 +152,8 @@ interface Column {
   cells: (Cell | null)[];
   monthLabel: string | null;
   onTarget: boolean;
+  /** a week that hasn't started yet — drawn as outlines, never marked */
+  isFuture: boolean;
 }
 
 function buildColumns(byDay: Record<string, number>, target: number): Column[] {
@@ -128,19 +161,21 @@ function buildColumns(byDay: Record<string, number>, target: number): Column[] {
   today.setHours(0, 0, 0, 0);
   const currentMonday = mondayOf(today);
 
-  // Window starts at the earliest active week, clamped to a sensible range so a
-  // brand-new log isn't a sea of empty squares and a long history stays bounded.
+  // Anchor the window at the first workout's week. Spare columns become runway
+  // (weeks ahead); once history outgrows MAX_COLS the start rolls forward.
   const activeDays = Object.keys(byDay).sort();
   const earliest = activeDays.length ? new Date(activeDays[0] + "T00:00:00") : today;
   const earliestMonday = mondayOf(earliest);
-  const weeksSinceStart = Math.round((currentMonday.getTime() - earliestMonday.getTime()) / (7 * 86400000)) + 1;
-  const weeks = Math.min(MAX_WEEKS, Math.max(MIN_WEEKS, weeksSinceStart));
+  const weeksSoFar =
+    Math.round((currentMonday.getTime() - earliestMonday.getTime()) / (7 * 86400000)) + 1;
+  const pastWeeks = Math.min(weeksSoFar, MAX_COLS - RUNWAY);
+  const cols = Math.min(MAX_COLS, Math.max(MIN_COLS, pastWeeks + RUNWAY));
   const start = new Date(currentMonday);
-  start.setDate(currentMonday.getDate() - (weeks - 1) * 7);
+  start.setDate(currentMonday.getDate() - (pastWeeks - 1) * 7);
 
   const columns: Column[] = [];
   let prevMonth = -1;
-  for (let w = 0; w < weeks; w++) {
+  for (let w = 0; w < cols; w++) {
     const cells: (Cell | null)[] = [];
     let weekCount = 0;
     const weekStart = new Date(start);
@@ -150,7 +185,7 @@ function buildColumns(byDay: Record<string, number>, target: number): Column[] {
       const day = new Date(weekStart);
       day.setDate(weekStart.getDate() + d);
       if (day > today) {
-        cells.push(null);
+        cells.push(null); // still to come — rendered as an outline
         continue;
       }
       const key = `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
@@ -164,9 +199,21 @@ function buildColumns(byDay: Record<string, number>, target: number): Column[] {
     const monthLabel = month !== prevMonth ? MONTHS[month] : null;
     prevMonth = month;
 
-    columns.push({ cells, monthLabel, onTarget: weekCount >= target });
+    columns.push({
+      cells,
+      monthLabel,
+      onTarget: weekCount >= target,
+      isFuture: weekStart.getTime() > currentMonday.getTime(),
+    });
   }
   return columns;
+}
+
+/** Cells grow while the strip is short so the card never looks sparse. */
+function cellSize(cols: number): number {
+  if (cols <= 14) return 26;
+  if (cols <= 28) return 17;
+  return 13;
 }
 
 function mondayOf(d: Date): Date {
