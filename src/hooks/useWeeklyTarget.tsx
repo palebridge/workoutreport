@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { readPreference, writePreference } from "./storage";
 
 interface TargetCtx {
   target: number;
@@ -15,12 +16,14 @@ const DEFAULT_TARGET = 3;
 
 export function WeeklyTargetProvider({ children }: { children: ReactNode }) {
   const [target, setTarget] = useState<number>(() => {
-    const saved = Number(localStorage.getItem(KEY));
-    return TARGET_OPTIONS.includes(saved as (typeof TARGET_OPTIONS)[number]) ? saved : DEFAULT_TARGET;
+    const saved = Number(readPreference(KEY));
+    return TARGET_OPTIONS.includes(saved as (typeof TARGET_OPTIONS)[number])
+      ? saved
+      : DEFAULT_TARGET;
   });
 
   useEffect(() => {
-    localStorage.setItem(KEY, String(target));
+    writePreference(KEY, String(target));
   }, [target]);
 
   const value = useMemo<TargetCtx>(() => ({ target, setTarget }), [target]);
@@ -29,6 +32,7 @@ export function WeeklyTargetProvider({ children }: { children: ReactNode }) {
 
 export function useWeeklyTarget(): TargetCtx {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useWeeklyTarget must be used within WeeklyTargetProvider");
+  if (!ctx)
+    throw new Error("useWeeklyTarget must be used within WeeklyTargetProvider");
   return ctx;
 }

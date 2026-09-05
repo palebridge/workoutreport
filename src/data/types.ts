@@ -10,6 +10,7 @@ export interface DatasetSet {
   distanceMeters: number | null;
   durationSeconds: number | null;
   rpe: number | null;
+  customMetric?: number | null;
 }
 
 export interface DatasetExercise {
@@ -18,6 +19,7 @@ export interface DatasetExercise {
   templateId: string;
   supersetId: number | null;
   sets: DatasetSet[];
+  notes?: string;
 }
 
 export interface DatasetWorkout {
@@ -32,6 +34,8 @@ export interface DatasetWorkout {
   /** Convenience: endTime - startTime, in seconds. */
   durationSeconds: number;
   exercises: DatasetExercise[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface TemplateMeta {
@@ -57,6 +61,12 @@ export interface BodyMeasurement {
 }
 
 export interface Dataset {
+  schemaVersion?: 2;
+  contentFingerprint?: string;
+  sources?: Record<
+    "workouts" | "templates" | "user" | "bodyMeasurements",
+    SourceStatus
+  >;
   /** ISO timestamp of when this snapshot was synced. */
   generatedAt: string;
   user: UserMeta | null;
@@ -65,6 +75,18 @@ export interface Dataset {
   /** templateId -> metadata, only for templates referenced by workouts. */
   templates: Record<string, TemplateMeta>;
   bodyMeasurements: BodyMeasurement[];
+}
+
+export interface SourceStatus {
+  status: "available" | "empty" | "partial" | "unavailable" | "unknown";
+  received: number;
+  expected?: number;
+}
+
+export interface DatasetV2 extends Dataset {
+  schemaVersion: 2;
+  contentFingerprint: string;
+  sources: NonNullable<Dataset["sources"]>;
 }
 
 /** Shape of the encrypted blob shipped to the browser. All fields base64. */

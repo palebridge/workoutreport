@@ -1,11 +1,18 @@
-import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { decryptDataset, fetchEncryptedPayload, WrongPasswordError } from "../crypto/decrypt";
-import { forgetPassword, recallPassword, rememberPassword } from "../crypto/remember";
+import { Icon, Wordmark } from "./lab/Icons";
+import {
+  decryptDataset,
+  fetchEncryptedPayload,
+  WrongPasswordError,
+} from "../crypto/decrypt";
+import {
+  forgetPassword,
+  recallPassword,
+  rememberPassword,
+} from "../crypto/remember";
 import type { Dataset, EncryptedPayload } from "../data/types";
 
 type Status = "loading" | "ready" | "decrypting" | "error";
-
 export function Gate({
   baseUrl,
   onUnlock,
@@ -16,45 +23,43 @@ export function Gate({
   const [payload, setPayload] = useState<EncryptedPayload | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     let alive = true;
-    (async () => {
+    async function load() {
       try {
-        // Fetch the blob and any remembered password in parallel.
-        const [p, saved] = await Promise.all([fetchEncryptedPayload(baseUrl), recallPassword()]);
+        const [p, saved] = await Promise.all([
+          fetchEncryptedPayload(baseUrl),
+          recallPassword(),
+        ]);
         if (!alive) return;
         setPayload(p);
-
-        // Auto-unlock if this device remembers the password.
         if (saved) {
           try {
-            const data = await decryptDataset(p, saved);
-            if (!alive) return;
-            onUnlock(data, saved);
+            const d = await decryptDataset(p, saved);
+            if (alive) onUnlock(d, saved);
             return;
           } catch {
-            // Password changed since it was remembered — forget and ask.
             await forgetPassword();
           }
         }
         if (alive) setStatus("ready");
       } catch (e) {
-        if (!alive) return;
-        setError(e instanceof Error ? e.message : "Failed to load data.");
-        setStatus("error");
+        if (alive) {
+          setError(e instanceof Error ? e.message : "Could not load data.");
+          setStatus("error");
+        }
       }
-    })();
+    }
+    void load();
     return () => {
       alive = false;
     };
   }, [baseUrl, onUnlock]);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!payload || !password) return;
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!payload || !password || status !== "ready") return;
     setStatus("decrypting");
     setError(null);
     try {
@@ -66,67 +71,101 @@ export function Gate({
       setStatus("ready");
       setError(
         err instanceof WrongPasswordError
-          ? "That password doesn't match. Try again."
-          : "Something went wrong decrypting the data.",
+          ? "That password does not match, or the snapshot is damaged. Try again."
+          : err instanceof Error
+            ? err.message
+            : "Could not unlock the snapshot.",
       );
     }
   }
-
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <motion.div
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="card w-full max-w-sm text-center"
-      >
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-glow-violet to-glow-indigo text-3xl shadow-glow">
-          💪
-        </div>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-white">
-          Workout Report
+    <div className="gate">
+      <div className="gate-brand">
+        <Wordmark />
+      </div>
+      <section className="gate-intro">
+        <p className="eyebrow">Your personal training lab</p>
+        <h1>
+          Every session.
+          <br />
+          <span className="text-muted">A bigger picture.</span>
         </h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Your training, decrypted in your browser.
+        <p>
+          Find the progress in your training. Follow the patterns. See what the
+          work adds up to.
         </p>
-
+        <div className="gate-lines" aria-hidden="true">
+          {[
+            22, 30, 25, 36, 32, 44, 38, 48, 56, 50, 60, 64, 58, 70, 65, 75, 85,
+            78, 92, 100,
+          ].map((h, i) => (
+            <i key={i} style={{ height: `${h}%` }} />
+          ))}
+        </div>
+      </section>
+      <section className="gate-form">
+        <span className="tag">
+          <Icon name="lock" size={14} /> Private workspace
+        </span>
+        <h2>Welcome back.</h2>
+        <p>Unlock your training history to take a closer look.</p>
         {status === "loading" ? (
-          <p className="mt-6 text-sm text-slate-500">Unlocking…</p>
-        ) : status === "error" ? (
-          <p className="mt-6 rounded-xl border border-glow-rose/30 bg-glow-rose/10 px-3 py-2 text-sm text-glow-rose">
-            {error}
+          <p className="gate-loading" role="status">
+            Loading your encrypted snapshot…
           </p>
+        ) : status === "error" ? (
+          <div className="gate-loading">
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+            <button className="text-button" onClick={() => location.reload()}>
+              Try again
+            </button>
+          </div>
         ) : (
-          <form onSubmit={submit} className="mt-6 space-y-3">
-            <input
-              type="password"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              autoComplete="current-password"
-              className="w-full rounded-xl border border-white/10 bg-ink-900/60 px-4 py-3 text-center text-white placeholder:text-slate-500 outline-none transition focus:border-glow-violet/60 focus:ring-2 focus:ring-glow-violet/30"
-            />
-            <label className="flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-400">
+          <form onSubmit={submit}>
+            <label htmlFor="password">
+              Dashboard password
+              <input
+                id="password"
+                type="password"
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                aria-invalid={!!error}
+                aria-describedby={error ? "unlock-error" : undefined}
+              />
+            </label>
+            <label className="checkbox-label">
               <input
                 type="checkbox"
                 checked={remember}
                 onChange={(e) => setRemember(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#8b5cf6]"
-              />
+              />{" "}
               Remember on this device
             </label>
             <button
               type="submit"
+              className="button primary"
               disabled={status !== "ready" || !password}
-              className="w-full rounded-xl bg-gradient-to-r from-glow-violet to-glow-indigo px-4 py-3 font-medium text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {status === "decrypting" ? "Unlocking…" : "Unlock"}
+              {status === "decrypting" ? "Unlocking…" : "Enter your workspace"}
+              <Icon name="arrow" size={18} />
             </button>
-            {error && <p className="text-sm text-glow-rose">{error}</p>}
+            {error && (
+              <p className="form-error" id="unlock-error" role="alert">
+                {error}
+              </p>
+            )}
           </form>
         )}
-      </motion.div>
+        <p className="gate-footnote">
+          Your history is decrypted here in your browser. Your password never
+          leaves this device.
+        </p>
+      </section>
     </div>
   );
 }

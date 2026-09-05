@@ -7,7 +7,7 @@ name: Sync & Deploy
 on:
   # Refresh every 6 hours so the dashboard keeps up with new workouts.
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "17 */6 * * *"
   # Allow manual runs from the Actions tab.
   workflow_dispatch:
   # Rebuild whenever the site code changes.
@@ -39,6 +39,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify analytical and encryption behavior
+        run: npm test
+
       - name: Sync data from Hevy
         env:
           HEVY_API_KEY: ${{ secrets.HEVY_API_KEY }}
@@ -54,6 +57,9 @@ jobs:
           # Serve under https://<user>.github.io/<repo>/
           BASE_PATH: "/${{ github.event.repository.name }}/"
         run: npm run build
+
+      - name: Verify published artifact privacy
+        run: npm run check:privacy
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { Unit } from "../data/metrics";
+import { readPreference, writePreference } from "./storage";
 
 interface UnitCtx {
   unit: Unit;
@@ -13,16 +14,20 @@ const KEY = "wr.unit";
 
 export function UnitProvider({ children }: { children: ReactNode }) {
   const [unit, setUnit] = useState<Unit>(() => {
-    const saved = localStorage.getItem(KEY);
+    const saved = readPreference(KEY);
     return saved === "lb" ? "lb" : "kg";
   });
 
   useEffect(() => {
-    localStorage.setItem(KEY, unit);
+    writePreference(KEY, unit);
   }, [unit]);
 
   const value = useMemo<UnitCtx>(
-    () => ({ unit, setUnit, toggle: () => setUnit((u) => (u === "kg" ? "lb" : "kg")) }),
+    () => ({
+      unit,
+      setUnit,
+      toggle: () => setUnit((u) => (u === "kg" ? "lb" : "kg")),
+    }),
     [unit],
   );
 

@@ -4,14 +4,22 @@ import { fmtWeight } from "../data/metrics";
 import { Card, EmptyHint, Pill } from "./ui";
 
 /** The month's volume target, dressed up as a monster with an HP bar. */
-export function BossBattle({ report }: { report: BossReport }) {
+export function BossBattle({
+  report,
+  onWorkout,
+}: {
+  report: BossReport;
+  onWorkout?: (id: string) => void;
+}) {
   const { unit } = useUnit();
   const boss = report.current;
 
   if (!boss) {
     return (
       <Card title={<>⚔️ Boss Battle</>}>
-        <EmptyHint>Log a workout and this month's boss will reveal itself…</EmptyHint>
+        <EmptyHint>
+          Log a workout and this month's boss will reveal itself…
+        </EmptyHint>
       </Card>
     );
   }
@@ -32,8 +40,12 @@ export function BossBattle({ report }: { report: BossReport }) {
           {boss.emoji}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="font-display text-lg font-semibold text-white">{boss.displayName}</div>
-          <p className="mt-0.5 text-xs italic text-slate-500">“{boss.flavor}”</p>
+          <div className="font-display text-lg font-semibold text-white">
+            {boss.displayName}
+          </div>
+          <p className="mt-0.5 text-xs italic text-slate-500">
+            “{boss.flavor}”
+          </p>
 
           {/* HP meter — status red; the track is a darker step of the same ramp */}
           <div className="mt-3">
@@ -57,8 +69,10 @@ export function BossBattle({ report }: { report: BossReport }) {
             </div>
           ) : (
             <p className="mt-2 text-xs text-slate-400">
-              <span className="font-medium text-slate-200">{fmtWeight(boss.hpLeft, unit)}</span> of
-              lifting left to slay it this month.
+              <span className="font-medium text-slate-200">
+                {fmtWeight(boss.hpLeft, unit)}
+              </span>{" "}
+              of lifting left to slay it this month.
             </p>
           )}
         </div>
@@ -73,10 +87,20 @@ export function BossBattle({ report }: { report: BossReport }) {
           <ul className="space-y-1">
             {boss.log.slice(0, 5).map((e, i) => (
               <li key={i} className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">{e.label}</span>
+                <button
+                  className="text-slate-400"
+                  aria-label={"Open boss contribution on " + e.label}
+                  onClick={() => onWorkout?.(e.workoutId)}
+                >
+                  {e.label}
+                </button>
                 <span className="text-slate-300">
                   ⚡ {fmtWeight(e.damage, unit)} damage
-                  {e.crit && <span className="ml-1.5 font-semibold text-glow-amber">★ CRIT</span>}
+                  {e.crit && (
+                    <span className="ml-1.5 font-semibold text-glow-amber">
+                      ★ CRIT
+                    </span>
+                  )}
                 </span>
               </li>
             ))}

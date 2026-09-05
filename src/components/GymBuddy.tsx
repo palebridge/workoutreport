@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { BuddyMood, BuddyState } from "../data/game";
 import { Card, Pill } from "./ui";
+import { readPreference, writePreference } from "../hooks/storage";
 
 const NAME_KEY = "wr.buddyName";
 const DEFAULT_NAME = "Rhino";
@@ -15,18 +16,24 @@ const MOOD_EMOJI: Record<BuddyMood, string> = {
 
 /** The dashboard's resident creature — its body and mood come from the data. */
 export function GymBuddy({ state }: { state: BuddyState }) {
-  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) || DEFAULT_NAME);
+  const [name, setName] = useState(
+    () => readPreference(NAME_KEY) || DEFAULT_NAME,
+  );
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(NAME_KEY, name);
+    writePreference(NAME_KEY, name);
   }, [name]);
 
   return (
     <Card
       title={<>🐾 Gym Buddy</>}
-      hint="Grows with your training. Neglect it at your peril."
-      accent={<Pill>{MOOD_EMOJI[state.mood]} {state.mood}</Pill>}
+      hint="A little character from your training story."
+      accent={
+        <Pill>
+          {MOOD_EMOJI[state.mood]} {state.mood}
+        </Pill>
+      }
     >
       <div className="flex items-center gap-5">
         <div className="w-[150px] shrink-0 animate-float">
@@ -38,6 +45,7 @@ export function GymBuddy({ state }: { state: BuddyState }) {
             {editing ? (
               <input
                 autoFocus
+                aria-label="Buddy name"
                 defaultValue={name}
                 maxLength={16}
                 onBlur={(e) => {
@@ -51,17 +59,22 @@ export function GymBuddy({ state }: { state: BuddyState }) {
               />
             ) : (
               <>
-                <span className="truncate font-display text-xl font-semibold text-white">{name}</span>
+                <span className="truncate font-display text-xl font-semibold text-white">
+                  {name}
+                </span>
                 <button
                   onClick={() => setEditing(true)}
                   title="Rename your buddy"
+                  aria-label="Rename your buddy"
                   className="text-xs text-slate-500 transition hover:text-slate-300"
                 >
                   ✏️
                 </button>
               </>
             )}
-            <Pill className="!text-glow-violet">Stage {state.stage} · {state.stageName}</Pill>
+            <Pill className="!text-glow-violet">
+              Stage {state.stage} · {state.stageName}
+            </Pill>
           </div>
 
           <p className="mt-2 rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-3 py-2 text-sm italic text-slate-300">
@@ -72,14 +85,19 @@ export function GymBuddy({ state }: { state: BuddyState }) {
             <div className="mt-3">
               <div className="flex justify-between text-[10px] text-slate-500">
                 <span>
-                  Evolves into <span className="text-slate-300">{state.nextEvolution.name}</span>
+                  Evolves into{" "}
+                  <span className="text-slate-300">
+                    {state.nextEvolution.name}
+                  </span>
                 </span>
                 <span>{Math.round(state.nextEvolution.progress * 100)}%</span>
               </div>
               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/5">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-glow-violet to-glow-indigo"
-                  style={{ width: `${Math.round(state.nextEvolution.progress * 100)}%` }}
+                  style={{
+                    width: `${Math.round(state.nextEvolution.progress * 100)}%`,
+                  }}
                 />
               </div>
             </div>
@@ -104,8 +122,15 @@ function BuddySvg({ state }: { state: BuddyState }) {
   const flexing = mood === "pumped" || mood === "celebrating";
 
   return (
-    <svg viewBox="0 0 200 210" className="h-auto w-full" role="img" aria-label="Your gym buddy">
-      <g transform={`translate(100 108) scale(${stageScale}) translate(-100 -108)`}>
+    <svg
+      viewBox="0 0 200 210"
+      className="h-auto w-full"
+      role="img"
+      aria-label="Your gym buddy"
+    >
+      <g
+        transform={`translate(100 108) scale(${stageScale}) translate(-100 -108)`}
+      >
         {/* legs */}
         <ellipse cx={82} cy={172} rx={9 * l} ry={20 * l} fill="#6d5bd0" />
         <ellipse cx={118} cy={172} rx={9 * l} ry={20 * l} fill="#6d5bd0" />
@@ -116,15 +141,43 @@ function BuddySvg({ state }: { state: BuddyState }) {
         {/* arms — hang at rest, curl up when flexing */}
         {flexing ? (
           <>
-            <ellipse cx={52} cy={112} rx={11 * a} ry={20 * a} transform="rotate(-135 52 112)" fill="#7c6ae0" />
-            <ellipse cx={148} cy={112} rx={11 * a} ry={20 * a} transform="rotate(135 148 112)" fill="#7c6ae0" />
+            <ellipse
+              cx={52}
+              cy={112}
+              rx={11 * a}
+              ry={20 * a}
+              transform="rotate(-135 52 112)"
+              fill="#7c6ae0"
+            />
+            <ellipse
+              cx={148}
+              cy={112}
+              rx={11 * a}
+              ry={20 * a}
+              transform="rotate(135 148 112)"
+              fill="#7c6ae0"
+            />
             <circle cx={42} cy={96} r={8 * a} fill="#7c6ae0" />
             <circle cx={158} cy={96} r={8 * a} fill="#7c6ae0" />
           </>
         ) : (
           <>
-            <ellipse cx={56} cy={128} rx={10 * a} ry={22 * a} transform="rotate(20 56 128)" fill="#7c6ae0" />
-            <ellipse cx={144} cy={128} rx={10 * a} ry={22 * a} transform="rotate(-20 144 128)" fill="#7c6ae0" />
+            <ellipse
+              cx={56}
+              cy={128}
+              rx={10 * a}
+              ry={22 * a}
+              transform="rotate(20 56 128)"
+              fill="#7c6ae0"
+            />
+            <ellipse
+              cx={144}
+              cy={128}
+              rx={10 * a}
+              ry={22 * a}
+              transform="rotate(-20 144 128)"
+              fill="#7c6ae0"
+            />
           </>
         )}
 
@@ -133,10 +186,22 @@ function BuddySvg({ state }: { state: BuddyState }) {
         <circle cx={100} cy={72} r={34} fill="#8b5cf6" />
 
         {/* belly patch */}
-        <ellipse cx={100} cy={134} rx={22 * t} ry={20 * t} fill="#a487f8" opacity={0.55} />
+        <ellipse
+          cx={100}
+          cy={134}
+          rx={22 * t}
+          ry={20 * t}
+          fill="#a487f8"
+          opacity={0.55}
+        />
 
         {/* stage accessories */}
-        {stage >= 2 && <path d="M68 58 Q100 44 132 58 L132 50 Q100 36 68 50 Z" fill="#e11d48" />}
+        {stage >= 2 && (
+          <path
+            d="M68 58 Q100 44 132 58 L132 50 Q100 36 68 50 Z"
+            fill="#e11d48"
+          />
+        )}
         {stage >= 3 && (
           <g>
             <rect x={88} y={95} width={24} height={4} rx={2} fill="#cbd5e1" />
@@ -145,7 +210,10 @@ function BuddySvg({ state }: { state: BuddyState }) {
           </g>
         )}
         {stage >= 4 && (
-          <path d="M78 40 L86 26 L94 38 L100 22 L106 38 L114 26 L122 40 Z" fill="#f5c542" />
+          <path
+            d="M78 40 L86 26 L94 38 L100 22 L106 38 L114 26 L122 40 Z"
+            fill="#f5c542"
+          />
         )}
 
         {/* ears/horns */}
@@ -180,19 +248,45 @@ function Face({ mood }: { mood: BuddyMood }) {
     case "celebrating":
       return (
         <g>
-          <text x={80} y={76} fontSize={16} textAnchor="middle" fill="#fbbf24">★</text>
-          <text x={120} y={76} fontSize={16} textAnchor="middle" fill="#fbbf24">★</text>
-          <path d="M85 86 Q100 100 115 86" stroke="#2d2258" strokeWidth={3.5} fill="none" strokeLinecap="round" />
+          <text x={80} y={76} fontSize={16} textAnchor="middle" fill="#fbbf24">
+            ★
+          </text>
+          <text x={120} y={76} fontSize={16} textAnchor="middle" fill="#fbbf24">
+            ★
+          </text>
+          <path
+            d="M85 86 Q100 100 115 86"
+            stroke="#2d2258"
+            strokeWidth={3.5}
+            fill="none"
+            strokeLinecap="round"
+          />
         </g>
       );
     case "pumped":
       return (
         <g>
-          <path d="M74 62 L90 68" stroke="#2d2258" strokeWidth={3} strokeLinecap="round" />
-          <path d="M126 62 L110 68" stroke="#2d2258" strokeWidth={3} strokeLinecap="round" />
+          <path
+            d="M74 62 L90 68"
+            stroke="#2d2258"
+            strokeWidth={3}
+            strokeLinecap="round"
+          />
+          <path
+            d="M126 62 L110 68"
+            stroke="#2d2258"
+            strokeWidth={3}
+            strokeLinecap="round"
+          />
           <circle cx={84} cy={73} r={4.5} fill="#2d2258" />
           <circle cx={116} cy={73} r={4.5} fill="#2d2258" />
-          <path d="M88 88 Q100 96 112 88" stroke="#2d2258" strokeWidth={3.5} fill="none" strokeLinecap="round" />
+          <path
+            d="M88 88 Q100 96 112 88"
+            stroke="#2d2258"
+            strokeWidth={3.5}
+            fill="none"
+            strokeLinecap="round"
+          />
         </g>
       );
     case "content":
@@ -200,14 +294,32 @@ function Face({ mood }: { mood: BuddyMood }) {
         <g>
           <circle cx={84} cy={72} r={4.5} fill="#2d2258" />
           <circle cx={116} cy={72} r={4.5} fill="#2d2258" />
-          <path d="M90 87 Q100 93 110 87" stroke="#2d2258" strokeWidth={3.5} fill="none" strokeLinecap="round" />
+          <path
+            d="M90 87 Q100 93 110 87"
+            stroke="#2d2258"
+            strokeWidth={3.5}
+            fill="none"
+            strokeLinecap="round"
+          />
         </g>
       );
     case "sleepy":
       return (
         <g>
-          <path d="M78 72 Q84 76 90 72" stroke="#2d2258" strokeWidth={3} fill="none" strokeLinecap="round" />
-          <path d="M110 72 Q116 76 122 72" stroke="#2d2258" strokeWidth={3} fill="none" strokeLinecap="round" />
+          <path
+            d="M78 72 Q84 76 90 72"
+            stroke="#2d2258"
+            strokeWidth={3}
+            fill="none"
+            strokeLinecap="round"
+          />
+          <path
+            d="M110 72 Q116 76 122 72"
+            stroke="#2d2258"
+            strokeWidth={3}
+            fill="none"
+            strokeLinecap="round"
+          />
           <ellipse cx={100} cy={90} rx={5} ry={4} fill="#2d2258" />
         </g>
       );
@@ -216,9 +328,25 @@ function Face({ mood }: { mood: BuddyMood }) {
         <g>
           <circle cx={84} cy={74} r={4.5} fill="#2d2258" />
           <circle cx={116} cy={74} r={4.5} fill="#2d2258" />
-          <path d="M78 64 L92 68" stroke="#2d2258" strokeWidth={2.5} strokeLinecap="round" />
-          <path d="M122 64 L108 68" stroke="#2d2258" strokeWidth={2.5} strokeLinecap="round" />
-          <path d="M90 92 Q100 84 110 92" stroke="#2d2258" strokeWidth={3.5} fill="none" strokeLinecap="round" />
+          <path
+            d="M78 64 L92 68"
+            stroke="#2d2258"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+          />
+          <path
+            d="M122 64 L108 68"
+            stroke="#2d2258"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+          />
+          <path
+            d="M90 92 Q100 84 110 92"
+            stroke="#2d2258"
+            strokeWidth={3.5}
+            fill="none"
+            strokeLinecap="round"
+          />
           <circle cx={122} cy={84} r={2.5} fill="#7dd3fc" />
         </g>
       );
