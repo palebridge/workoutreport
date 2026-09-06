@@ -10,10 +10,13 @@ dist/
 .env.*
 !.env.example
 
-# Plaintext synced data (only the encrypted blob is published)
-data/dataset.json
+# Local sync data only; keep src/data source files tracked.
+/data/
 public/data/dataset.json
 public/data/dataset.enc.json
+
+# Temporary files from atomic snapshot writes
+*.tmp
 
 # Misc
 .DS_Store

@@ -3,15 +3,17 @@
 // constant pools — no server, no randomness beyond date-seeded picks.
 
 import type { MuscleStat, Overview, TrophySummary } from "./metrics";
+import { setVolumeKg } from "./metrics";
 import {
-  epley1RM,
-  isStrengthSet,
-  isWorkingSet,
-  isoWeek,
-  setVolumeKg,
-  shortDate,
-} from "./metrics";
+  addDays,
+  dayDistance,
+  defaultTimezone,
+  displayDay,
+  localDay,
+  weekStart,
+} from "./calendar";
 import type { Dataset } from "./types";
+import { recordEvents } from "./records";
 
 // ----------------------------------------------------------------------------
 // Gym Buddy — an evolving companion computed from the training data
@@ -48,31 +50,31 @@ const MOOD_LINES: Record<BuddyMood, string[]> = {
     "PR day! I'm telling everyone.",
   ],
   pumped: [
-    "We trained today. I feel HUGE.",
-    "Post-workout glow. Look at us.",
+    "Another session in the log. Nice work, team.",
+    "Our training story has a new chapter.",
     "That session slapped. Same time next visit?",
   ],
   content: [
-    "Nicely recovered. Ready when you are.",
-    "Muscles rebuilding… growth in progress.",
-    "Rest is part of the program. We're on track.",
+    "One more page in our training story.",
+    "The log is looking good. See you next session.",
+    "Taking a breather. Ready when you are.",
   ],
   sleepy: [
     "Getting a bit dusty over here… gym soon?",
     "*yawn* … was starting to hibernate.",
-    "My gains are going quiet. Wake them up?",
+    "Our next session is still unwritten.",
   ],
   sad: [
     "I miss the gym. And you. Mostly the gym.",
-    "A week off?! My biceps are deflating…",
+    "It has been a little while. I saved your place.",
     "Remember me? Your old training partner?",
   ],
 };
 
-const CHICKEN_LEGS_LINE = "…also, can we talk about leg day?";
+const CHICKEN_LEGS_LINE = "Our log has more upper-body sets so far.";
 
-function dayOfYear(d: Date): number {
-  return Math.floor((d.getTime() - new Date(d.getFullYear(), 0, 0).getTime()) / 86400000);
+function dayOfYear(day: string): number {
+  return dayDistance(`${day.slice(0, 4)}-01-01`, day) + 1;
 }
 
 export function buddy(
@@ -80,10 +82,13 @@ export function buddy(
   ov: Overview,
   muscles: MuscleStat[],
   trophy: TrophySummary,
+  timezone = defaultTimezone(),
+  nowISO = new Date().toISOString(),
 ): BuddyState {
   // Evolution stage from trophy score.
   let stage = 1;
-  for (let i = 0; i < STAGES.length; i++) if (trophy.score >= STAGES[i].threshold) stage = i + 1;
+  for (let i = 0; i < STAGES.length; i++)
+    if (trophy.score >= STAGES[i].threshold) stage = i + 1;
   const nextStage = STAGES[stage]; // undefined when maxed
   const prevThreshold = STAGES[stage - 1].threshold;
   const nextEvolution = nextStage
@@ -92,7 +97,11 @@ export function buddy(
         threshold: nextStage.threshold,
         progress: Math.max(
           0,
-          Math.min(1, (trophy.score - prevThreshold) / (nextStage.threshold - prevThreshold)),
+          Math.min(
+            1,
+            (trophy.score - prevThreshold) /
+              (nextStage.threshold - prevThreshold),
+          ),
         ),
       }
     : null;
@@ -109,18 +118,30 @@ export function buddy(
     else if (m.category === "Legs") legs += m.sets;
   }
   const upper = push + pull;
-  const armScale = total > 0 ? clamp(0.75 + (upper / total) * 1.1, 0.75, 1.5) : 1;
+  const armScale =
+    total > 0 ? clamp(0.75 + (upper / total) * 1.1, 0.75, 1.5) : 1;
   const legScale = total > 0 ? clamp(0.7 + (legs / total) * 1.8, 0.7, 1.5) : 1;
   const chickenLegs = total > 0 && legs < upper / 2 && ov.workouts >= 3;
-  const torsoScale = clamp(0.8 + Math.log10(Math.max(ov.totalVolumeKg, 1)) / 10, 0.8, 1.4);
+  const torsoScale = clamp(
+    0.8 + Math.log10(Math.max(ov.totalVolumeKg, 1)) / 10,
+    0.8,
+    1.4,
+  );
 
   // Mood.
-  const now = new Date();
-  let daysSince: number | null = null;
-  if (ov.lastWorkout) {
-    daysSince = Math.max(0, Math.floor((now.getTime() - Date.parse(ov.lastWorkout)) / 86400000));
-  }
-  const lastWorkoutHadPr = lastSessionBeatARecord(d);
+  const today = localDay(nowISO, timezone);
+  const history = d.workouts
+    .filter((w) => Date.parse(w.startTime) <= Date.parse(nowISO))
+    .sort(
+      (a, b) =>
+        Date.parse(a.startTime) - Date.parse(b.startTime) ||
+        a.id.localeCompare(b.id),
+    );
+  const lastWorkout = history[history.length - 1];
+  const daysSince = lastWorkout
+    ? dayDistance(localDay(lastWorkout.startTime, timezone), today)
+    : null;
+  const lastWorkoutHadPr = lastSessionBeatARecord(d, lastWorkout?.id);
   let mood: BuddyMood;
   if (daysSince === null) mood = "sleepy";
   else if (daysSince <= 1 && lastWorkoutHadPr) mood = "celebrating";
@@ -130,7 +151,7 @@ export function buddy(
   else mood = "sad";
 
   const pool = MOOD_LINES[mood];
-  let moodLine = pool[dayOfYear(now) % pool.length];
+  let moodLine = pool[dayOfYear(today) % pool.length];
   if (chickenLegs && (mood === "content" || mood === "pumped")) {
     moodLine = `${moodLine} ${CHICKEN_LEGS_LINE}`;
   }
@@ -150,10 +171,11 @@ export function buddy(
 }
 
 /** Did the most recent workout beat any previous est-1RM best? */
-function lastSessionBeatARecord(d: Dataset): boolean {
-  if (d.workouts.length < 2) return d.workouts.length === 1; // first workout = all PRs
-  const critSessions = critSessionIds(d);
-  return critSessions.has(d.workouts[d.workouts.length - 1].id);
+function lastSessionBeatARecord(
+  d: Dataset,
+  workoutId: string | undefined,
+): boolean {
+  return workoutId !== undefined && critSessionIds(d).has(workoutId);
 }
 
 // ----------------------------------------------------------------------------
@@ -169,21 +191,82 @@ interface BossDef {
 }
 
 const BOSSES: BossDef[] = [
-  { emoji: "🗿", name: "Gronk", epithet: "Granite Golem", flavor: "It doesn't move. It waits to be out-lifted." },
-  { emoji: "🐉", name: "Ferrum", epithet: "Rust Dragon", flavor: "Feeds on skipped sessions. Starve it." },
-  { emoji: "🦣", name: "Tonnage", epithet: "Woolly Mammoth", flavor: "Extinct everywhere except your gym." },
-  { emoji: "🦑", name: "Kraken", epithet: "Kilogram Kraken", flavor: "Every tentacle is another set you owe." },
-  { emoji: "🦖", name: "Rex", epithet: "Plateausaurus", flavor: "Fears nothing but progressive overload." },
-  { emoji: "👹", name: "Oni", epithet: "Iron Ogre", flavor: "Guards the rack. Rude about it." },
-  { emoji: "🤖", name: "K-2000", epithet: "Chrome Crusher", flavor: "Calculates your defeat. Recalculate it." },
-  { emoji: "🐻", name: "Ursa", epithet: "Barbell Bear", flavor: "Hibernation is not an option for either of you." },
-  { emoji: "🧊", name: "Glacius", epithet: "Frozen Colossus", flavor: "Melts one rep at a time." },
-  { emoji: "🌋", name: "Magmar", epithet: "Molten Behemoth", flavor: "Forged in the fires of leg day." },
-  { emoji: "⚙️", name: "Gearlord", epithet: "Machine Overlord", flavor: "It has read your program. Surprise it." },
-  { emoji: "🐘", name: "Jumbo", epithet: "Unliftable Elephant", flavor: "Nothing is unliftable. Prove it." },
+  {
+    emoji: "🗿",
+    name: "Gronk",
+    epithet: "Granite Golem",
+    flavor: "It doesn't move. It waits to be out-lifted.",
+  },
+  {
+    emoji: "🐉",
+    name: "Ferrum",
+    epithet: "Rust Dragon",
+    flavor: "Feeds on skipped sessions. Starve it.",
+  },
+  {
+    emoji: "🦣",
+    name: "Tonnage",
+    epithet: "Woolly Mammoth",
+    flavor: "Extinct everywhere except your gym.",
+  },
+  {
+    emoji: "🦑",
+    name: "Kraken",
+    epithet: "Kilogram Kraken",
+    flavor: "Every tentacle is another set you owe.",
+  },
+  {
+    emoji: "🦖",
+    name: "Rex",
+    epithet: "Plateausaurus",
+    flavor: "Fears nothing but progressive overload.",
+  },
+  {
+    emoji: "👹",
+    name: "Oni",
+    epithet: "Iron Ogre",
+    flavor: "Guards the rack. Rude about it.",
+  },
+  {
+    emoji: "🤖",
+    name: "K-2000",
+    epithet: "Chrome Crusher",
+    flavor: "Calculates your defeat. Recalculate it.",
+  },
+  {
+    emoji: "🐻",
+    name: "Ursa",
+    epithet: "Barbell Bear",
+    flavor: "Hibernation is not an option for either of you.",
+  },
+  {
+    emoji: "🧊",
+    name: "Glacius",
+    epithet: "Frozen Colossus",
+    flavor: "Melts one rep at a time.",
+  },
+  {
+    emoji: "🌋",
+    name: "Magmar",
+    epithet: "Molten Behemoth",
+    flavor: "Forged in the fires of leg day.",
+  },
+  {
+    emoji: "⚙️",
+    name: "Gearlord",
+    epithet: "Machine Overlord",
+    flavor: "It has read your program. Surprise it.",
+  },
+  {
+    emoji: "🐘",
+    name: "Jumbo",
+    epithet: "Unliftable Elephant",
+    flavor: "Nothing is unliftable. Prove it.",
+  },
 ];
 
 export interface BossLogEntry {
+  workoutId: string;
   date: string;
   label: string;
   damage: number;
@@ -215,101 +298,109 @@ export interface BossReport {
   shelf: BossShelfEntry[];
 }
 
-export function bossBattle(d: Dataset): BossReport {
-  if (d.workouts.length === 0) return { current: null, shelf: [] };
+export function bossBattle(
+  d: Dataset,
+  timezone = defaultTimezone(),
+  nowISO = new Date().toISOString(),
+): BossReport {
+  const workouts = d.workouts
+    .filter((w) => Date.parse(w.startTime) <= Date.parse(nowISO))
+    .sort(
+      (a, b) =>
+        Date.parse(a.startTime) - Date.parse(b.startTime) ||
+        a.id.localeCompare(b.id),
+    );
+  if (workouts.length === 0) return { current: null, shelf: [] };
 
   const crits = critSessionIds(d);
-  const now = new Date();
-  const first = new Date(d.workouts[0].startTime);
-
-  // Weekly volume by ISO week (for HP baselines).
-  const weekVol = new Map<string, { start: Date; volume: number }>();
-  for (const w of d.workouts) {
-    const { key, weekStart } = isoWeek(w.startTime);
-    const cur = weekVol.get(key) ?? { start: weekStart, volume: 0 };
-    cur.volume += workoutVolume(w);
-    weekVol.set(key, cur);
+  const today = localDay(nowISO, timezone);
+  const firstDay = localDay(workouts[0].startTime, timezone);
+  const firstWeek = weekStart(firstDay);
+  const weekVol = new Map<string, number>();
+  for (const w of workouts) {
+    const week = weekStart(localDay(w.startTime, timezone));
+    weekVol.set(week, (weekVol.get(week) ?? 0) + workoutVolume(w));
   }
-  const weeks = [...weekVol.values()].sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  // Include every calendar week since the first session. Missing weeks are
+  // zero-volume observations, rather than skipped entries in the HP baseline.
+  const weeks: { start: string; volume: number }[] = [];
+  const currentWeek = weekStart(today);
+  for (let week = firstWeek; week <= currentWeek; week = addDays(week, 7)) {
+    weeks.push({ start: week, volume: weekVol.get(week) ?? 0 });
+  }
 
   const shelf: BossShelfEntry[] = [];
   let current: BossState | null = null;
+  for (let monthStart = `${firstDay.slice(0, 7)}-01`; monthStart <= today; ) {
+    const y = Number(monthStart.slice(0, 4));
+    const m = Number(monthStart.slice(5, 7)) - 1;
+    const nextMonth = new Date(Date.UTC(y, m + 1, 1, 12))
+      .toISOString()
+      .slice(0, 10);
+    const daysInMonth = dayDistance(monthStart, nextMonth);
+    const isCurrent = monthStart.slice(0, 7) === today.slice(0, 7);
 
-  const cursor = new Date(first.getFullYear(), first.getMonth(), 1);
-  while (cursor <= now) {
-    const y = cursor.getFullYear();
-    const m = cursor.getMonth();
-    const monthStart = new Date(y, m, 1);
-    const nextMonth = new Date(y, m + 1, 1);
-    const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const isCurrent = y === now.getFullYear() && m === now.getMonth();
-
-    // Baseline: avg of up to 4 weeks fully completed before the month starts;
-    // early on (no completed weeks yet) fall back to the first training week.
-    // That fallback stabilizes once the first week completes — acceptable for
-    // the opening weeks of a brand-new log.
-    const completed = weeks.filter(
-      (w) => w.start.getTime() + 7 * 86400000 <= monthStart.getTime(),
+    const baselineWeeks = weeks
+      .filter((w) => addDays(w.start, 7) <= monthStart)
+      .slice(-4);
+    // Keep the tutorial fallback to the first training week's logged volume.
+    const baseline = baselineWeeks.length
+      ? baselineWeeks.reduce((sum, w) => sum + w.volume, 0) /
+        baselineWeeks.length
+      : (weekVol.get(firstWeek) ?? 0);
+    const isJoinMonth = monthStart.slice(0, 7) === firstDay.slice(0, 7);
+    const effectiveDays = isJoinMonth
+      ? dayDistance(firstDay, nextMonth)
+      : daysInMonth;
+    const hp = Math.max(
+      2000,
+      Math.round((((baseline * effectiveDays) / 7) * 1.05) / 500) * 500,
     );
-    const baselineWeeks = completed.slice(-4);
-    const baseline =
-      baselineWeeks.length > 0
-        ? baselineWeeks.reduce((s, w) => s + w.volume, 0) / baselineWeeks.length
-        : weeks[0]?.volume ?? 0;
 
-    // First calendar month is prorated from the join date (tutorial boss).
-    const isJoinMonth = y === first.getFullYear() && m === first.getMonth();
-    const effectiveDays = isJoinMonth ? daysInMonth - first.getDate() + 1 : daysInMonth;
-
-    let hp = Math.round(((baseline * effectiveDays) / 7) * 1.05 / 500) * 500;
-    hp = Math.max(hp, 2000);
-
-    // Damage = this month's session volumes.
-    const monthWorkouts = d.workouts.filter((w) => {
-      const t = Date.parse(w.startTime);
-      return t >= monthStart.getTime() && t < nextMonth.getTime();
+    const monthWorkouts = workouts.filter((w) => {
+      const day = localDay(w.startTime, timezone);
+      return day >= monthStart && day < nextMonth;
     });
-    const damage = Math.round(monthWorkouts.reduce((s, w) => s + workoutVolume(w), 0));
+    // Damage keeps full precision so a rounded display cannot defeat a boss.
+    const damage = monthWorkouts.reduce((sum, w) => sum + workoutVolume(w), 0);
     const slain = damage >= hp;
-
     const def = BOSSES[(y * 12 + m) % BOSSES.length];
     const tonnes = hp / 1000;
-    const tonneStr = tonnes >= 10 ? String(Math.round(tonnes)) : tonnes.toFixed(1);
-    const monthLabel = monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    const tonneStr =
+      tonnes >= 10 ? String(Math.round(tonnes)) : tonnes.toFixed(1);
 
     if (isCurrent) {
-      const log: BossLogEntry[] = monthWorkouts
-        .map((w) => ({
-          date: w.startTime,
-          label: shortDate(w.startTime),
-          damage: Math.round(workoutVolume(w)),
-          crit: crits.has(w.id),
-        }))
-        .reverse();
       current = {
         emoji: def.emoji,
         displayName: `${def.name}, the ${tonneStr}-Tonne ${def.epithet}`,
         flavor: def.flavor,
-        monthLabel,
+        monthLabel: displayDay(monthStart, { month: "long", year: "numeric" }),
         hp,
         hpLeft: Math.max(0, hp - damage),
         damage,
         slain,
-        daysLeft: daysInMonth - now.getDate() + 1,
-        log,
+        daysLeft: dayDistance(today, nextMonth),
+        log: monthWorkouts
+          .map((w) => ({
+            workoutId: w.id,
+            date: w.startTime,
+            label: displayDay(localDay(w.startTime, timezone)),
+            damage: workoutVolume(w),
+            crit: crits.has(w.id),
+          }))
+          .reverse(),
       };
     } else {
       shelf.push({
-        monthLabel: monthStart.toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
+        monthLabel: displayDay(monthStart, { month: "short", year: "2-digit" }),
         emoji: def.emoji,
         name: def.name,
         slain,
       });
     }
-
-    cursor.setMonth(cursor.getMonth() + 1);
+    monthStart = nextMonth;
   }
-
   return { current, shelf };
 }
 
@@ -355,13 +446,15 @@ export function ironMountain(d: Dataset): MountainState {
   for (const w of d.workouts) {
     cum += workoutVolume(w);
     for (let i = 0; i < WAYPOINTS.length; i++) {
-      if (reachedDates[i] === null && cum >= WAYPOINTS[i].kg) reachedDates[i] = w.startTime;
+      if (reachedDates[i] === null && cum >= WAYPOINTS[i].kg)
+        reachedDates[i] = w.startTime;
     }
   }
-  const totalKg = Math.round(cum);
+  const totalKg = cum;
 
   let lastReachedIndex = -1;
-  for (let i = 0; i < WAYPOINTS.length; i++) if (totalKg >= WAYPOINTS[i].kg) lastReachedIndex = i;
+  for (let i = 0; i < WAYPOINTS.length; i++)
+    if (totalKg >= WAYPOINTS[i].kg) lastReachedIndex = i;
 
   const next = WAYPOINTS[lastReachedIndex + 1] ?? null;
   const prevKg = lastReachedIndex >= 0 ? WAYPOINTS[lastReachedIndex].kg : 0;
@@ -395,26 +488,13 @@ function workoutVolume(w: Dataset["workouts"][number]): number {
   return v;
 }
 
-/** Workout ids where a previous est-1RM best was beaten (or the first workout). */
+/** Workout ids where an eligible previous est-1RM best was beaten. */
 function critSessionIds(d: Dataset): Set<string> {
-  const best = new Map<string, number>();
-  const crits = new Set<string>();
-  for (const w of d.workouts) {
-    const sessionBest = new Map<string, number>();
-    for (const e of w.exercises) {
-      for (const s of e.sets) {
-        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
-        const e1 = epley1RM(s.weightKg!, s.reps!);
-        if (e1 > (sessionBest.get(e.templateId) ?? 0)) sessionBest.set(e.templateId, e1);
-      }
-    }
-    for (const [id, e1] of sessionBest) {
-      const prev = best.get(id);
-      if (prev !== undefined && e1 > prev) crits.add(w.id);
-      if (prev === undefined || e1 > prev) best.set(id, e1);
-    }
-  }
-  return crits;
+  return new Set(
+    recordEvents(d)
+      .filter((e) => e.previous !== null)
+      .map((e) => e.workoutId),
+  );
 }
 
 function clamp(v: number, lo: number, hi: number): number {

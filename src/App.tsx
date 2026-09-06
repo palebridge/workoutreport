@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Dashboard } from "./components/Dashboard";
+import SportsLab from "./components/lab/SportsLab";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Gate } from "./components/Gate";
 import { decryptDataset, fetchEncryptedPayload } from "./crypto/decrypt";
@@ -14,13 +14,15 @@ export default function App() {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   // Kept in memory only (never persisted) so "Refresh" can re-decrypt a newly
   // deployed snapshot without re-prompting for the password.
+  const [syncedAt, setSyncedAt] = useState("");
   const passwordRef = useRef<string | null>(null);
   const lastGenRef = useRef<string | null>(null);
 
   const handleUnlock = useCallback((d: Dataset, password: string) => {
     passwordRef.current = password;
-    lastGenRef.current = d.generatedAt;
+    lastGenRef.current = d.contentFingerprint ?? d.generatedAt;
     setDataset(d);
+    setSyncedAt(d.generatedAt);
   }, []);
 
   // Re-fetch the latest *deployed* encrypted blob and decrypt it in place.
@@ -29,13 +31,15 @@ export default function App() {
     if (!password) return { changed: false };
     const payload = await fetchEncryptedPayload(BASE_URL);
     const data = await decryptDataset(payload, password);
-    const changed = data.generatedAt !== lastGenRef.current;
+    const changed =
+      (data.contentFingerprint ?? data.generatedAt) !== lastGenRef.current;
     // Only swap the dataset (which re-renders/re-animates every chart) when the
     // deployed snapshot actually changed — a no-op refresh stays perfectly still.
     if (changed) {
-      lastGenRef.current = data.generatedAt;
+      lastGenRef.current = data.contentFingerprint ?? data.generatedAt;
       setDataset(data);
     }
+    setSyncedAt(data.generatedAt);
     return { changed };
   }, []);
 
@@ -47,7 +51,11 @@ export default function App() {
     <ErrorBoundary>
       <UnitProvider>
         <WeeklyTargetProvider>
-          <Dashboard dataset={dataset} onRefresh={refresh} />
+          <SportsLab
+            syncedAt={syncedAt}
+            dataset={dataset}
+            onRefresh={refresh}
+          />
         </WeeklyTargetProvider>
       </UnitProvider>
     </ErrorBoundary>

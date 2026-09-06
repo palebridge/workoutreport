@@ -3,6 +3,11 @@
 // plaintext never leaves memory.
 
 import type { Dataset, EncryptedPayload } from "../data/types";
+import {
+  contentHash,
+  validateDataset,
+  validateEnvelope,
+} from "../data/validate";
 
 export class WrongPasswordError extends Error {
   constructor() {
@@ -18,23 +23,30 @@ function fromB64(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-export async function fetchEncryptedPayload(baseUrl: string): Promise<EncryptedPayload> {
+export async function fetchEncryptedPayload(
+  baseUrl: string,
+): Promise<EncryptedPayload> {
   // Cache-bust so a freshly redeployed snapshot is picked up immediately.
   const res = await fetch(`${baseUrl}data/dataset.enc.json?t=${Date.now()}`, {
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Could not load data (HTTP ${res.status}).`);
-  return (await res.json()) as EncryptedPayload;
+  return validateEnvelope(await res.json());
 }
 
 export async function decryptDataset(
   payload: EncryptedPayload,
   password: string,
 ): Promise<Dataset> {
+  payload = validateEnvelope(payload);
   const enc = new TextEncoder();
-  const baseKey = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, [
-    "deriveKey",
-  ]);
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
   const key = await crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
@@ -60,5 +72,15 @@ export async function decryptDataset(
     throw new WrongPasswordError();
   }
 
-  return JSON.parse(new TextDecoder().decode(plaintext)) as Dataset;
+  const dataset = validateDataset(
+    JSON.parse(new TextDecoder().decode(plaintext)),
+  );
+  const hash = await contentHash(dataset);
+  if (dataset.schemaVersion === 2 && dataset.contentFingerprint !== hash) {
+    throw new Error(
+      "The snapshot content does not match its fingerprint. Sync again.",
+    );
+  }
+  dataset.contentFingerprint = hash;
+  return dataset;
 }

@@ -2,6 +2,14 @@
 // the client so drill-downs stay flexible; the dataset is small.
 
 import type { Dataset, DatasetSet, TemplateMeta } from "./types";
+import { eligibleE1RM, recordEvents } from "./records";
+import {
+  addDays,
+  defaultTimezone,
+  displayDay,
+  localDay,
+  weekStart,
+} from "./calendar";
 
 export const KG_TO_LB = 2.2046226218;
 
@@ -41,12 +49,12 @@ export function isCountableSet(s: DatasetSet): boolean {
 }
 
 export function setVolumeKg(s: DatasetSet): number {
-  return (s.weightKg ?? 0) * (s.reps ?? 0);
+  return Math.max(0, s.weightKg ?? 0) * (s.reps ?? 0);
 }
 
 /** Epley estimated one-rep max. */
 export function epley1RM(weightKg: number, reps: number): number {
-  return weightKg * (1 + reps / 30);
+  return reps === 1 ? weightKg : weightKg * (1 + reps / 30);
 }
 
 // ----------------------------------------------------------------------------
@@ -77,7 +85,9 @@ export function isoWeek(iso: string): { key: string; weekStart: Date } {
   const thursday = new Date(weekStart);
   thursday.setDate(weekStart.getDate() + 3);
   const yearStart = new Date(thursday.getFullYear(), 0, 1);
-  const week = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  const week = Math.ceil(
+    ((thursday.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
   return { key: `${thursday.getFullYear()}-W${pad(week)}`, weekStart };
 }
 
@@ -133,7 +143,9 @@ export function overview(d: Dataset): Overview {
     totalSets,
     totalReps,
     totalDistanceM,
-    avgDurationSec: d.workouts.length ? Math.round(totalDurationSec / d.workouts.length) : 0,
+    avgDurationSec: d.workouts.length
+      ? Math.round(totalDurationSec / d.workouts.length)
+      : 0,
     firstWorkout: first,
     lastWorkout: last,
     daysTraining,
@@ -253,10 +265,15 @@ export interface CategorySplit {
 export function categorySplit(stats: MuscleStat[]): CategorySplit[] {
   const order: MuscleCategory[] = ["Push", "Pull", "Legs", "Core", "Other"];
   const map = new Map<MuscleCategory, number>();
-  for (const s of stats) map.set(s.category, (map.get(s.category) ?? 0) + s.sets);
+  for (const s of stats)
+    map.set(s.category, (map.get(s.category) ?? 0) + s.sets);
   return order
     .filter((c) => (map.get(c) ?? 0) > 0)
-    .map((c) => ({ category: c, sets: round1(map.get(c) ?? 0), color: CATEGORY_COLORS[c] }));
+    .map((c) => ({
+      category: c,
+      sets: round1(map.get(c) ?? 0),
+      color: CATEGORY_COLORS[c],
+    }));
 }
 
 // ----------------------------------------------------------------------------
@@ -292,73 +309,60 @@ export interface Consistency {
   activeDays: number;
 }
 
-export function consistency(d: Dataset, target: number): Consistency {
+export function consistency(
+  d: Dataset,
+  target: number,
+  timezone = defaultTimezone(),
+  now = new Date().toISOString(),
+): Consistency {
   const byDay: Record<string, number> = {};
-  for (const w of d.workouts) {
-    const k = dayKey(w.startTime);
-    byDay[k] = (byDay[k] ?? 0) + 1;
-  }
-
-  // Bucket sessions into ISO weeks.
   const perWeek = new Map<string, number>();
-  for (const w of d.workouts) {
-    const key = isoWeek(w.startTime).key;
-    perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
+  const workouts = d.workouts.filter(
+    (w) => Date.parse(w.startTime) <= Date.parse(now),
+  );
+  for (const w of workouts) {
+    const day = localDay(w.startTime, timezone);
+    byDay[day] = (byDay[day] ?? 0) + 1;
+    const week = weekStart(day);
+    perWeek.set(week, (perWeek.get(week) ?? 0) + 1);
   }
 
-  // Build a *contiguous* list of weeks from the first workout's week to the
-  // current week, filling gap weeks with 0 so streaks/averages are correct.
-  const now = new Date();
-  const currentWeekStart = isoWeek(now.toISOString()).weekStart;
-  const counts: number[] = [];
+  // Calendar-day keys keep Monday boundaries stable through timezone and DST changes.
+  const currentWeek = weekStart(localDay(now, timezone));
   const weeks: WeekSessions[] = [];
-  if (d.workouts.length > 0) {
-    const firstStart = isoWeek(d.workouts[0].startTime).weekStart;
-    const cursor = new Date(firstStart);
-    while (cursor.getTime() <= currentWeekStart.getTime()) {
-      const count = perWeek.get(isoWeek(cursor.toISOString()).key) ?? 0;
-      counts.push(count);
-      weeks.push({ label: shortDate(cursor.toISOString()), count, onTarget: count >= target });
-      cursor.setDate(cursor.getDate() + 7);
+  const firstWeek = [...perWeek.keys()].sort()[0];
+  if (firstWeek) {
+    for (let week = firstWeek; week <= currentWeek; week = addDays(week, 7)) {
+      const count = perWeek.get(week) ?? 0;
+      weeks.push({ label: displayDay(week), count, onTarget: count >= target });
     }
   }
 
-  const totalWeeks = counts.length;
-  const totalWorkouts = d.workouts.length;
-  const sessionsThisWeek = perWeek.get(isoWeek(now.toISOString()).key) ?? 0;
-  const avgPerWeek = totalWeeks > 0 ? totalWorkouts / totalWeeks : 0;
-  const bestWeek = counts.reduce((m, c) => Math.max(m, c), 0);
-  const weeksMetTarget = counts.filter((c) => c >= target).length;
-
-  // Longest run of on-target weeks anywhere in the span.
   let longestWeekStreak = 0;
   let run = 0;
-  for (const c of counts) {
-    run = c >= target ? run + 1 : 0;
+  for (const week of weeks) {
+    run = week.onTarget ? run + 1 : 0;
     longestWeekStreak = Math.max(longestWeekStreak, run);
   }
 
-  // Current weekly streak, counting back from now. Forgive the in-progress
-  // current week if it hasn't hit the target yet (mirrors a grace day).
+  // The current week is still in progress, so a missed target does not break
+  // the streak until the next week. Empty completed weeks always break it.
   let weeksOnTargetStreak = 0;
-  let i = counts.length - 1;
-  if (i >= 0 && counts[i] < target) i -= 1; // skip unfinished current week
-  for (; i >= 0; i--) {
-    if (counts[i] >= target) weeksOnTargetStreak += 1;
-    else break;
-  }
+  let i = weeks.length - 1;
+  if (i >= 0 && !weeks[i].onTarget) i--;
+  for (; i >= 0 && weeks[i].onTarget; i--) weeksOnTargetStreak++;
 
   return {
     byDay,
     weeks,
     target,
-    sessionsThisWeek,
-    avgPerWeek,
+    sessionsThisWeek: perWeek.get(currentWeek) ?? 0,
+    avgPerWeek: weeks.length ? workouts.length / weeks.length : 0,
     weeksOnTargetStreak,
     longestWeekStreak,
-    weeksMetTarget,
-    totalWeeks,
-    bestWeek,
+    weeksMetTarget: weeks.filter((week) => week.onTarget).length,
+    totalWeeks: weeks.length,
+    bestWeek: weeks.reduce((best, week) => Math.max(best, week.count), 0),
     activeDays: Object.keys(byDay).length,
   };
 }
@@ -405,21 +409,38 @@ export function buildInsights(
   if (ov.workouts > 0) {
     out.push(
       remaining <= 0
-        ? { id: "goal", emoji: "✅", text: `Weekly goal hit — ${cons.sessionsThisWeek} of ${cons.target} sessions done. Anything extra is a bonus.` }
-        : { id: "goal", emoji: "🎯", text: `${remaining} more session${remaining > 1 ? "s" : ""} to hit this week's goal of ${cons.target}.` },
+        ? {
+            id: "goal",
+            emoji: "✅",
+            text: `Weekly goal hit — ${cons.sessionsThisWeek} of ${cons.target} sessions done. Anything extra is a bonus.`,
+          }
+        : {
+            id: "goal",
+            emoji: "🎯",
+            text: `${remaining} more session${remaining > 1 ? "s" : ""} to hit this week's goal of ${cons.target}.`,
+          },
     );
   }
 
   // Time since last session
   if (ov.lastWorkout) {
-    const days = Math.floor((Date.now() - Date.parse(ov.lastWorkout)) / 86400000);
+    const days = Math.floor(
+      (Date.now() - Date.parse(ov.lastWorkout)) / 86400000,
+    );
     if (days >= 4) {
-      out.push({ id: "gap", emoji: "⏰", text: `It's been ${days} days since your last session — a short one still counts.` });
+      out.push({
+        id: "gap",
+        emoji: "⏰",
+        text: `It's been ${days} days since your last session — a short one still counts.`,
+      });
     } else if (days >= 0) {
       out.push({
         id: "gap",
         emoji: "💪",
-        text: days === 0 ? "You trained today. Recovery is where the growth happens." : `Last session ${days} day${days > 1 ? "s" : ""} ago — right on rhythm.`,
+        text:
+          days === 0
+            ? "You trained today. Recovery is where the growth happens."
+            : `Last session ${days} day${days > 1 ? "s" : ""} ago — right on rhythm.`,
       });
     }
   }
@@ -435,7 +456,11 @@ export function buildInsights(
         text: `${least.label} is getting the least attention (${least.sets} weighted sets vs ${most.sets} for ${most.label.toLowerCase()}) — worth a couple of sets next visit.`,
       });
     } else {
-      out.push({ id: "balance", emoji: "⚖️", text: `Training is nicely balanced — ${most.label.toLowerCase()} leads with ${most.sets} weighted sets, nothing is badly lagging.` });
+      out.push({
+        id: "balance",
+        emoji: "⚖️",
+        text: `Training is nicely balanced — ${most.label.toLowerCase()} leads with ${most.sets} weighted sets, nothing is badly lagging.`,
+      });
     }
   }
 
@@ -443,22 +468,35 @@ export function buildInsights(
   let bestGain: { title: string; gainKg: number } | null = null;
   const byTemplate = new Map<string, ProgressPoint[]>();
   const ids = new Set<string>();
-  for (const w of d.workouts) for (const e of w.exercises) ids.add(e.templateId);
+  for (const w of d.workouts)
+    for (const e of w.exercises) ids.add(e.templateId);
   for (const id of ids) byTemplate.set(id, exerciseProgress(d, id));
   for (const [id, pts] of byTemplate) {
     const strength = pts.filter((p) => p.est1RMKg > 0);
     if (strength.length >= 2) {
-      const gain = strength[strength.length - 1].est1RMKg - strength[0].est1RMKg;
+      const gain =
+        strength[strength.length - 1].est1RMKg - strength[0].est1RMKg;
       if (gain > 0 && (!bestGain || gain > bestGain.gainKg)) {
         const t = d.templates[id];
-        bestGain = { title: t?.title ?? "an exercise", gainKg: Math.round(gain * 10) / 10 };
+        bestGain = {
+          title: t?.title ?? "an exercise",
+          gainKg: Math.round(gain * 10) / 10,
+        };
       }
     }
   }
   if (bestGain) {
-    out.push({ id: "gain", emoji: "📈", text: `${bestGain.title} est. 1RM is up ${bestGain.gainKg} kg since you started — progress is compounding.` });
+    out.push({
+      id: "gain",
+      emoji: "📈",
+      text: `${bestGain.title} est. 1RM is up ${bestGain.gainKg} kg since you started — progress is compounding.`,
+    });
   } else if (ov.workouts >= 2) {
-    out.push({ id: "gain", emoji: "📈", text: "Repeat an exercise from an earlier session to unlock progression tracking — same lift, add a rep or a little weight." });
+    out.push({
+      id: "gain",
+      emoji: "📈",
+      text: "Repeat an exercise from an earlier session to unlock progression tracking — same lift, add a rep or a little weight.",
+    });
   }
 
   // Next badge within reach
@@ -466,7 +504,11 @@ export function buildInsights(
     .filter((b) => !b.earned)
     .sort((a, b) => b.progress - a.progress)[0];
   if (next) {
-    out.push({ id: "badge", emoji: next.emoji, text: `Next badge in reach: ${next.title} — ${next.description.toLowerCase()}.` });
+    out.push({
+      id: "badge",
+      emoji: next.emoji,
+      text: `Next badge in reach: ${next.title} — ${next.description.toLowerCase()}.`,
+    });
   }
 
   return out.slice(0, 4);
@@ -594,7 +636,8 @@ export function routineProgress(d: Dataset): RoutineSeries[] {
   return [...map.values()].sort(
     (a, b) =>
       b.timesPerformed - a.timesPerformed ||
-      Date.parse(b.points[b.points.length - 1].date) - Date.parse(a.points[a.points.length - 1].date),
+      Date.parse(b.points[b.points.length - 1].date) -
+        Date.parse(a.points[a.points.length - 1].date),
   );
 }
 
@@ -643,14 +686,20 @@ export function exerciseSummaries(d: Dataset): ExerciseSummary[] {
         cur.totalSets += 1;
         if (isStrengthSet(s) && isWorkingSet(s)) {
           cur.bestWeightKg = Math.max(cur.bestWeightKg, s.weightKg!);
-          cur.best1RMKg = Math.max(cur.best1RMKg, epley1RM(s.weightKg!, s.reps!));
+          cur.best1RMKg = Math.max(
+            cur.best1RMKg,
+            eligibleE1RM(s, d.templates[e.templateId]) ?? 0,
+          );
         }
       }
-      if (Date.parse(w.startTime) >= Date.parse(cur.lastPerformed)) cur.lastPerformed = w.startTime;
+      if (Date.parse(w.startTime) >= Date.parse(cur.lastPerformed))
+        cur.lastPerformed = w.startTime;
       map.set(e.templateId, cur);
     }
   }
-  return [...map.values()].sort((a, b) => b.sessions - a.sessions || b.totalSets - a.totalSets);
+  return [...map.values()].sort(
+    (a, b) => b.sessions - a.sessions || b.totalSets - a.totalSets,
+  );
 }
 
 export interface ProgressPoint {
@@ -664,47 +713,35 @@ export interface ProgressPoint {
 }
 
 /** Per-session progression for one exercise, oldest first, with PR flags. */
-export function exerciseProgress(d: Dataset, templateId: string): ProgressPoint[] {
-  const points: ProgressPoint[] = [];
-  for (const w of d.workouts) {
-    const matches = w.exercises.filter((e) => e.templateId === templateId);
-    if (matches.length === 0) continue;
-    let topWeight = 0;
-    let best1RM = 0;
-    let volume = 0;
-    let reps = 0;
-    let hasStrength = false;
-    for (const e of matches)
-      for (const s of e.sets) {
-        volume += setVolumeKg(s);
-        reps += s.reps ?? 0;
-        if (isStrengthSet(s) && isWorkingSet(s)) {
-          hasStrength = true;
-          topWeight = Math.max(topWeight, s.weightKg!);
-          best1RM = Math.max(best1RM, epley1RM(s.weightKg!, s.reps!));
-        }
-      }
-    points.push({
-      date: dayKey(w.startTime),
-      label: shortDate(w.startTime),
-      topWeightKg: hasStrength ? round1(topWeight) : 0,
-      est1RMKg: hasStrength ? round1(best1RM) : 0,
-      volumeKg: Math.round(volume),
-      totalReps: reps,
-      isPR: false,
+export function exerciseProgress(
+  d: Dataset,
+  templateId: string,
+): ProgressPoint[] {
+  const improvements = new Set(
+    recordEvents(d)
+      .filter((e) => e.templateId === templateId && e.previous !== null)
+      .map((e) => e.workoutId),
+  );
+  return d.workouts
+    .filter((w) => w.exercises.some((e) => e.templateId === templateId))
+    .map((w) => {
+      const sets = w.exercises
+        .filter((e) => e.templateId === templateId)
+        .flatMap((e) => e.sets);
+      const strength = sets.filter((s) => isStrengthSet(s) && isWorkingSet(s));
+      return {
+        date: dayKey(w.startTime),
+        label: shortDate(w.startTime),
+        topWeightKg: Math.max(0, ...strength.map((s) => s.weightKg!)),
+        est1RMKg: Math.max(
+          0,
+          ...sets.map((s) => eligibleE1RM(s, d.templates[templateId]) ?? 0),
+        ),
+        volumeKg: sets.reduce((sum, s) => sum + setVolumeKg(s), 0),
+        totalReps: sets.reduce((sum, s) => sum + (s.reps ?? 0), 0),
+        isPR: improvements.has(w.id),
+      };
     });
-  }
-  // Flag PRs on estimated 1RM (falls back to volume for non-weighted work).
-  let best = 0;
-  const useVolume = points.every((p) => p.est1RMKg === 0);
-  for (const p of points) {
-    const metric = useVolume ? p.volumeKg : p.est1RMKg;
-    if (metric > best) {
-      best = metric;
-      p.isPR = true;
-    }
-  }
-  return points;
 }
 
 export interface PRRecord {
@@ -734,80 +771,56 @@ export interface PRWallEntry {
 /** Full per-exercise record wall, newest record first. */
 export function prWall(d: Dataset): PRWallEntry[] {
   const map = new Map<string, PRWallEntry>();
-  const seenSessions = new Map<string, Set<string>>();
-  for (const w of d.workouts) {
-    const sessionBest = new Map<string, number>();
-    for (const e of w.exercises) {
-      for (const s of e.sets) {
-        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
-        let cur = map.get(e.templateId);
-        if (!cur) {
-          cur = {
-            templateId: e.templateId,
-            title: e.title,
-            muscle: d.templates[e.templateId]?.primaryMuscleGroup ?? null,
-            heaviestKg: 0,
-            heaviestReps: 0,
-            best1RMKg: 0,
-            date: w.startTime,
-            timesImproved: 0,
-            sessions: 0,
-          };
-          map.set(e.templateId, cur);
-        }
+  for (const event of recordEvents(d)) {
+    const old = map.get(event.templateId);
+    map.set(event.templateId, {
+      templateId: event.templateId,
+      title: event.title,
+      muscle: d.templates[event.templateId]?.primaryMuscleGroup ?? null,
+      heaviestKg: 0,
+      heaviestReps: 0,
+      best1RMKg: event.value,
+      date: event.date,
+      timesImproved:
+        (old?.timesImproved ?? 0) + (event.previous === null ? 0 : 1),
+      sessions: 0,
+    });
+  }
+  for (const [id, row] of map) {
+    for (const w of d.workouts) {
+      const sets = w.exercises
+        .filter((e) => e.templateId === id)
+        .flatMap((e) => e.sets)
+        .filter((set) => isStrengthSet(set) && isWorkingSet(set));
+      if (sets.length) row.sessions++;
+      for (const set of sets)
         if (
-          s.weightKg! > cur.heaviestKg ||
-          (s.weightKg! === cur.heaviestKg && s.reps! > cur.heaviestReps)
+          set.weightKg! > row.heaviestKg ||
+          (set.weightKg === row.heaviestKg && set.reps! > row.heaviestReps)
         ) {
-          cur.heaviestKg = s.weightKg!;
-          cur.heaviestReps = s.reps!;
+          row.heaviestKg = set.weightKg!;
+          row.heaviestReps = set.reps!;
         }
-        const e1 = epley1RM(s.weightKg!, s.reps!);
-        if (e1 > (sessionBest.get(e.templateId) ?? 0)) sessionBest.set(e.templateId, e1);
-        const sessions = seenSessions.get(e.templateId) ?? new Set<string>();
-        sessions.add(w.id);
-        seenSessions.set(e.templateId, sessions);
-      }
-    }
-    for (const [id, e1] of sessionBest) {
-      const cur = map.get(id)!;
-      if (e1 > cur.best1RMKg) {
-        if (cur.best1RMKg > 0) cur.timesImproved += 1;
-        cur.best1RMKg = Math.round(e1 * 10) / 10;
-        cur.date = w.startTime;
-      }
     }
   }
-  for (const [id, sessions] of seenSessions) {
-    const cur = map.get(id);
-    if (cur) cur.sessions = sessions.size;
-  }
-  return [...map.values()].sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  return [...map.values()].sort(
+    (a, b) => Date.parse(b.date) - Date.parse(a.date),
+  );
 }
 
 /** One best-effort PR per exercise, newest achievement first. */
 export function personalRecords(d: Dataset): PRRecord[] {
-  const map = new Map<string, PRRecord>();
-  for (const w of d.workouts) {
-    for (const e of w.exercises) {
-      for (const s of e.sets) {
-        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
-        const e1 = epley1RM(s.weightKg!, s.reps!);
-        const cur = map.get(e.templateId);
-        if (!cur || e1 > cur.best1RMKg) {
-          map.set(e.templateId, {
-            templateId: e.templateId,
-            title: e.title,
-            date: w.startTime,
-            best1RMKg: round1(e1),
-            bestWeightKg: s.weightKg!,
-            reps: s.reps!,
-          });
-        }
-      }
-    }
-  }
-  return [...map.values()].sort((a, b) => b.best1RMKg - a.best1RMKg);
+  const latest = new Map<string, PRRecord>();
+  for (const event of recordEvents(d))
+    latest.set(event.templateId, {
+      templateId: event.templateId,
+      title: event.title,
+      date: event.date,
+      best1RMKg: event.value,
+      bestWeightKg: event.weightKg,
+      reps: event.reps,
+    });
+  return [...latest.values()].sort((a, b) => b.best1RMKg - a.best1RMKg);
 }
 
 // ----------------------------------------------------------------------------
@@ -852,33 +865,49 @@ export interface TrophySummary {
   prImprovements: number;
 }
 
-const MEDAL_SCORE: Record<Medal, number> = { bronze: 10, silver: 25, gold: 50, platinum: 100 };
+const MEDAL_SCORE: Record<Medal, number> = {
+  bronze: 10,
+  silver: 25,
+  gold: 50,
+  platinum: 100,
+};
 
 function familyDefs(): FamilyDef[] {
   const fmt = (v: number) => Math.round(v).toLocaleString();
   return [
     {
-      id: "sessions", icon: "🏋️", label: "Sessions", unit: "workouts",
+      id: "sessions",
+      icon: "🏋️",
+      label: "Sessions",
+      unit: "workouts",
       tiers: [
         { threshold: 5, name: "First Five" },
         { threshold: 15, name: "Regular" },
         { threshold: 40, name: "Dedicated" },
         { threshold: 100, name: "Centurion" },
       ],
-      describe: (n) => `complete ${fmt(n)} workouts`, format: fmt,
+      describe: (n) => `complete ${fmt(n)} workouts`,
+      format: fmt,
     },
     {
-      id: "volume", icon: "🐘", label: "Total Volume", unit: "kg lifted",
+      id: "volume",
+      icon: "🐘",
+      label: "Total Volume",
+      unit: "kg lifted",
       tiers: [
         { threshold: 1_000, name: "One Tonne Club" },
         { threshold: 10_000, name: "Ten Tonnes" },
         { threshold: 50_000, name: "Fifty Tonnes" },
         { threshold: 150_000, name: "Freight Train" },
       ],
-      describe: (n) => `lift ${fmt(n)} kg of total volume`, format: fmt,
+      describe: (n) => `lift ${fmt(n)} kg of total volume`,
+      format: fmt,
     },
     {
-      id: "hours", icon: "⏱️", label: "Gym Time", unit: "hours",
+      id: "hours",
+      icon: "⏱️",
+      label: "Gym Time",
+      unit: "hours",
       tiers: [
         { threshold: 1, name: "Hour of Power" },
         { threshold: 10, name: "Time Under Tension" },
@@ -889,92 +918,103 @@ function familyDefs(): FamilyDef[] {
       format: (v) => v.toFixed(1),
     },
     {
-      id: "sets", icon: "📦", label: "Total Sets", unit: "sets",
+      id: "sets",
+      icon: "📦",
+      label: "Total Sets",
+      unit: "sets",
       tiers: [
         { threshold: 100, name: "Century Club" },
         { threshold: 300, name: "Set Builder" },
         { threshold: 750, name: "Volume Dealer" },
         { threshold: 1_500, name: "Set Machine" },
       ],
-      describe: (n) => `log ${fmt(n)} total sets`, format: fmt,
+      describe: (n) => `log ${fmt(n)} total sets`,
+      format: fmt,
     },
     {
-      id: "reps", icon: "🔁", label: "Total Reps", unit: "reps",
+      id: "reps",
+      icon: "🔁",
+      label: "Total Reps",
+      unit: "reps",
       tiers: [
         { threshold: 1_000, name: "The Grand" },
         { threshold: 3_000, name: "Rep Collector" },
         { threshold: 7_500, name: "Rep Dealer" },
         { threshold: 15_000, name: "Rep Tycoon" },
       ],
-      describe: (n) => `perform ${fmt(n)} total reps`, format: fmt,
+      describe: (n) => `perform ${fmt(n)} total reps`,
+      format: fmt,
     },
     {
-      id: "weeksOnGoal", icon: "🎯", label: "Weeks on Goal", unit: "weeks",
+      id: "weeksOnGoal",
+      icon: "🎯",
+      label: "Weeks on Goal",
+      unit: "weeks",
       tiers: [
         { threshold: 1, name: "On Target" },
         { threshold: 4, name: "Habit Forming" },
         { threshold: 12, name: "Quarter Master" },
         { threshold: 26, name: "Half-Year Strong" },
       ],
-      describe: (n) => `hit your weekly goal in ${fmt(n)} week${n > 1 ? "s" : ""}`, format: fmt,
+      describe: (n) =>
+        `hit your weekly goal in ${fmt(n)} week${n > 1 ? "s" : ""}`,
+      format: fmt,
     },
     {
-      id: "goalStreak", icon: "🔥", label: "Goal Streak", unit: "weeks running",
+      id: "goalStreak",
+      icon: "🔥",
+      label: "Goal Streak",
+      unit: "weeks running",
       tiers: [
         { threshold: 2, name: "Back to Back" },
         { threshold: 4, name: "Locked In" },
         { threshold: 8, name: "Unstoppable" },
         { threshold: 16, name: "Machine Mode" },
       ],
-      describe: (n) => `hit your weekly goal ${fmt(n)} weeks in a row`, format: fmt,
+      describe: (n) => `hit your weekly goal ${fmt(n)} weeks in a row`,
+      format: fmt,
     },
     {
-      id: "exercises", icon: "🧭", label: "Exercise Variety", unit: "exercises",
+      id: "exercises",
+      icon: "🧭",
+      label: "Exercise Variety",
+      unit: "exercises",
       tiers: [
         { threshold: 5, name: "Sampler" },
         { threshold: 10, name: "Explorer" },
         { threshold: 20, name: "Connoisseur" },
         { threshold: 35, name: "Completionist" },
       ],
-      describe: (n) => `try ${fmt(n)} different exercises`, format: fmt,
+      describe: (n) => `try ${fmt(n)} different exercises`,
+      format: fmt,
     },
     {
-      id: "prs", icon: "⭐", label: "Records Beaten", unit: "PRs",
+      id: "prs",
+      icon: "⭐",
+      label: "Records Beaten",
+      unit: "PRs",
       tiers: [
         { threshold: 3, name: "Record Setter" },
         { threshold: 10, name: "Record Breaker" },
         { threshold: 25, name: "PR Hunter" },
         { threshold: 60, name: "Limit Pusher" },
       ],
-      describe: (n) => `beat your own record ${fmt(n)} times`, format: fmt,
+      describe: (n) => `beat your own record ${fmt(n)} times`,
+      format: fmt,
     },
   ];
 }
 
 /** Sessions where an already-tracked exercise beat its previous best est-1RM. */
 export function countPrImprovements(d: Dataset): number {
-  const best = new Map<string, number>();
-  let improvements = 0;
-  for (const w of d.workouts) {
-    // Session best per exercise first, so multiple slots don't double count.
-    const sessionBest = new Map<string, number>();
-    for (const e of w.exercises) {
-      for (const s of e.sets) {
-        if (!isStrengthSet(s) || !isWorkingSet(s)) continue;
-        const e1 = epley1RM(s.weightKg!, s.reps!);
-        if (e1 > (sessionBest.get(e.templateId) ?? 0)) sessionBest.set(e.templateId, e1);
-      }
-    }
-    for (const [id, e1] of sessionBest) {
-      const prev = best.get(id);
-      if (prev !== undefined && e1 > prev) improvements += 1;
-      if (prev === undefined || e1 > prev) best.set(id, e1);
-    }
-  }
-  return improvements;
+  return recordEvents(d).filter((event) => event.previous !== null).length;
 }
 
-export function trophySummary(d: Dataset, ov: Overview, cons: Consistency): TrophySummary {
+export function trophySummary(
+  d: Dataset,
+  ov: Overview,
+  cons: Consistency,
+): TrophySummary {
   const prImprovements = countPrImprovements(d);
   const values: Record<string, number> = {
     sessions: ov.workouts,
@@ -1023,9 +1063,9 @@ export function trophySummary(d: Dataset, ov: Overview, cons: Consistency): Trop
         if (!heaviest || s.weightKg! > heaviest.weightKg) {
           heaviest = { weightKg: s.weightKg!, reps: s.reps!, title: e.title };
         }
-        const e1 = epley1RM(s.weightKg!, s.reps!);
-        if (!best1RM || e1 > best1RM.kg) {
-          best1RM = { kg: Math.round(e1 * 10) / 10, title: e.title };
+        const e1 = eligibleE1RM(s, d.templates[e.templateId]);
+        if (e1 !== null && (!best1RM || e1 > best1RM.kg)) {
+          best1RM = { kg: e1, title: e.title };
         }
       }
     }
@@ -1047,6 +1087,7 @@ export function trophySummary(d: Dataset, ov: Overview, cons: Consistency): Trop
 // ----------------------------------------------------------------------------
 
 export interface JourneyEvent {
+  workoutId: string;
   date: string; // ISO
   emoji: string;
   title: string;
@@ -1054,9 +1095,18 @@ export interface JourneyEvent {
   kind: "badge" | "pr" | "start" | "week";
 }
 
-export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
+export function journeyEvents(
+  d: Dataset,
+  target: number,
+  timezone = defaultTimezone(),
+): JourneyEvent[] {
   const events: JourneyEvent[] = [];
   if (d.workouts.length === 0) return events;
+  const workouts = [...d.workouts].sort(
+    (a, b) =>
+      Date.parse(a.startTime) - Date.parse(b.startTime) ||
+      a.id.localeCompare(b.id),
+  );
 
   const defs = familyDefs();
   const crossed = new Set<string>(); // "familyId:threshold"
@@ -1068,7 +1118,7 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
   let sets = 0;
   let reps = 0;
   const exercises = new Set<string>();
-  const best = new Map<string, number>();
+  const verifiedRecords = recordEvents(d).filter((e) => e.previous !== null);
   const weekCounts = new Map<string, number>();
   let weeksMet = 0;
   let streak = 0;
@@ -1095,6 +1145,7 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
         if (!crossed.has(key) && (values[f.id] ?? 0) >= t.threshold) {
           crossed.add(key);
           events.push({
+            workoutId: w.id,
             date: w.startTime,
             emoji: f.icon,
             title: `${t.name} unlocked`,
@@ -1107,21 +1158,22 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
   };
 
   events.push({
-    date: d.workouts[0].startTime,
+    workoutId: workouts[0].id,
+    date: workouts[0].startTime,
     emoji: "🌱",
     title: "The journey begins",
-    detail: d.workouts[0].title,
+    detail: workouts[0].title,
     kind: "start",
   });
 
-  for (const w of d.workouts) {
+  for (const w of workouts) {
     sessions += 1;
     seconds += w.durationSeconds;
 
     // Weekly goal bookkeeping: when a week's count reaches the target, log it.
-    const wk = isoWeek(w.startTime).key;
+    const wk = weekStart(localDay(w.startTime, timezone));
     if (prevWeekKey !== null && wk !== prevWeekKey) {
-      if (!prevWeekMet) streak = 0; // a completed week that missed the goal breaks the run
+      if (!prevWeekMet || addDays(prevWeekKey, 7) !== wk) streak = 0;
       prevWeekMet = false;
     }
     prevWeekKey = wk;
@@ -1132,6 +1184,7 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
       streak += 1;
       prevWeekMet = true;
       events.push({
+        workoutId: w.id,
         date: w.startTime,
         emoji: "✅",
         title: "Weekly goal hit",
@@ -1140,33 +1193,24 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
       });
     }
 
-    const sessionBest = new Map<string, { e1: number; title: string }>();
     for (const e of w.exercises) {
       exercises.add(e.templateId);
-      for (const s of e.sets) {
-        sets += 1;
-        reps += s.reps ?? 0;
-        volume += setVolumeKg(s);
-        if (isStrengthSet(s) && isWorkingSet(s)) {
-          const e1 = epley1RM(s.weightKg!, s.reps!);
-          const cur = sessionBest.get(e.templateId);
-          if (!cur || e1 > cur.e1) sessionBest.set(e.templateId, { e1, title: e.title });
-        }
+      for (const set of e.sets) {
+        sets++;
+        reps += set.reps ?? 0;
+        volume += setVolumeKg(set);
       }
     }
-    for (const [id, { e1, title }] of sessionBest) {
-      const prev = best.get(id);
-      if (prev !== undefined && e1 > prev) {
-        improvements += 1;
-        events.push({
-          date: w.startTime,
-          emoji: "⭐",
-          title: `New ${title} record`,
-          detail: `est. 1RM ${round1kg(e1)} kg (+${round1kg(e1 - prev)})`,
-          kind: "pr",
-        });
-      }
-      if (prev === undefined || e1 > prev) best.set(id, e1);
+    for (const event of verifiedRecords.filter((e) => e.workoutId === w.id)) {
+      improvements++;
+      events.push({
+        workoutId: event.workoutId,
+        date: event.date,
+        emoji: "⭐",
+        title: `New ${event.title} record`,
+        detail: `est. 1RM ${round1kg(event.value)} kg (+${round1kg(event.value - event.previous!)})`,
+        kind: "pr",
+      });
     }
 
     checkFamilies(w);
@@ -1177,6 +1221,7 @@ export function journeyEvents(d: Dataset, target: number): JourneyEvent[] {
 }
 
 interface DatasetWorkoutLike {
+  id: string;
   startTime: string;
   title: string;
   durationSeconds: number;
@@ -1203,21 +1248,33 @@ export interface Achievement {
   progress: number; // 0..1
 }
 
-export function achievements(d: Dataset, ov: Overview, cons: Consistency): Achievement[] {
+export function achievements(
+  d: Dataset,
+  ov: Overview,
+  cons: Consistency,
+): Achievement[] {
   const summary = trophySummary(d, ov, cons);
   const out: Achievement[] = [];
   for (const f of summary.families) {
     for (let i = 0; i < f.earnedTiers; i++) {
       const t = f.tiers[i];
       out.push({
-        id: `${f.id}:${t.threshold}`, emoji: f.icon, title: t.name,
-        description: f.describe(t.threshold), earned: true, progress: 1,
+        id: `${f.id}:${t.threshold}`,
+        emoji: f.icon,
+        title: t.name,
+        description: f.describe(t.threshold),
+        earned: true,
+        progress: 1,
       });
     }
     if (f.next) {
       out.push({
-        id: `${f.id}:${f.next.tier.threshold}`, emoji: f.icon, title: f.next.tier.name,
-        description: f.describe(f.next.tier.threshold), earned: false, progress: f.next.progress,
+        id: `${f.id}:${f.next.tier.threshold}`,
+        emoji: f.icon,
+        title: f.next.tier.name,
+        description: f.describe(f.next.tier.threshold),
+        earned: false,
+        progress: f.next.progress,
       });
     }
   }
@@ -1229,7 +1286,10 @@ export function achievements(d: Dataset, ov: Overview, cons: Consistency): Achie
 // ----------------------------------------------------------------------------
 
 export function shortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export function fmtDuration(totalSec: number): string {

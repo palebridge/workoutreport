@@ -1,6 +1,6 @@
 // Personal display name shown in the dashboard header. Set to null to fall back
 // to your Hevy username.
-export const DISPLAY_NAME: string | null = "Pål Espen";
+export const DISPLAY_NAME: string | null = null;
 
 // "owner/repo" — used to deep-link the "Sync from Hevy" action to the workflow
 // run page. Set to null to hide that link.
